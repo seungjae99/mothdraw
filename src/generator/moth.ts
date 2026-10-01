@@ -1,14 +1,19 @@
 import { clip } from '../core/clip';
-import { contour, ellipse, mirror, SEGMENT_SAMPLES, type Point, type Polyline } from '../core/geometry';
-import { dice } from '../core/random';
+import { contour, mirror, SEGMENT_SAMPLES, type Point, type Polyline } from '../core/geometry';
+import { MIN_ROUGHEN_POINTS, roughen } from '../core/ink';
+import { dice, type Dice } from '../core/random';
+import { buildBody } from './body';
 import { marginRange, wingField } from './field';
-import type { LayerLine, Mark } from './marks';
+import { UNBOUNDED_LAYERS, type LayerLine, type Mark } from './marks';
 import { wingPattern, type PatternRecipe } from './pattern';
-import { bodyTexture, wingTexture, type TextureRecipe } from './texture';
+import { tear, wingTexture, type TextureRecipe } from './texture';
 
-export { MARK_LAYERS, TEXTURE_LAYERS, type Mark, type MarkLayer } from './marks';
+export { MARK_LAYERS, TEXTURE_LAYERS, UNBOUNDED_LAYERS, type Mark, type MarkLayer } from './marks';
 
-export const GENERATOR_VERSION = '0.3.0';
+export const GENERATOR_VERSION = '0.4.0';
+/** Roughly how often a wing carries visible damage, per side. */
+const FORE_TEAR = 0.2;
+const HIND_TEAR = 0.14;
 export const FAMILIES = ['rounded', 'pointed', 'swept', 'scalloped', 'tailed'] as const;
 export type Family = typeof FAMILIES[number];
 export const FAMILY_LABELS: Record<Family, string> = {
@@ -21,8 +26,16 @@ export interface Moth {
   family: Family;
   /** [hindwing right, hindwing left, forewing right, forewing left]; marks index into this. */
   wings: readonly Polyline[];
+  /** Filled shapes: abdomen, thorax, head and eyes. */
   body: readonly Polyline[];
   antennae: readonly Polyline[];
+  /** Hair and legs in ink, drawn over the wings and under the body fill. */
+  bristles: readonly Polyline[];
+  /**
+   * Whether each wing carries a bite out of its margin, index-aligned with
+   * `wings`. Wear is the one feature allowed to differ between the two sides.
+   */
+  torn: readonly boolean[];
   /** Wing markings, already clipped to their wing and to any wing covering it. */
   marks: readonly Mark[];
   /** Abdomen creases and thorax tufts, drawn over the wings. */
@@ -43,30 +56,32 @@ interface FamilyRecipe {
 
 const FORE_PATTERN: PatternRecipe = {
   veins: [9, 11], bands: [2, 3], bandWaves: [2.5, 4.5], bandAmplitude: [0.02, 0.05],
-  bandTilt: [-0.2, -0.06], bandStart: [0.2, 0.3], bandSpan: [0.42, 0.78], doubleBand: 0.45, eyespot: 0.4, eyespotRadius: [6, 11], discalBar: 0.5,
+  bandTilt: [-0.2, -0.06], bandStart: [0.2, 0.3], bandSpan: [0.42, 0.78], doubleBand: 0.45, eyespot: 0.62, eyespotRadius: [8, 14], discalBar: 0.5,
+  shade: 0.78, shadeWidth: [0.1, 0.19], shadeStrokes: [58, 86],
 };
 const HIND_PATTERN: PatternRecipe = {
   veins: [6, 8], bands: [1, 2], bandWaves: [2, 3.5], bandAmplitude: [0.02, 0.05],
-  bandTilt: [-0.14, -0.02], bandStart: [0.06, 0.14], bandSpan: [0.45, 0.72], doubleBand: 0.3, eyespot: 0.3, eyespotRadius: [5, 8], discalBar: 0.2,
+  bandTilt: [-0.14, -0.02], bandStart: [0.06, 0.14], bandSpan: [0.45, 0.72], doubleBand: 0.3, eyespot: 0.45, eyespotRadius: [6, 10], discalBar: 0.2,
+  shade: 0.6, shadeWidth: [0.09, 0.17], shadeStrokes: [44, 66],
 };
 const FORE_TEXTURE: TextureTuning = {
-  hatchPatches: 2, hatchStrokes: [16, 26], hatchLength: [5, 9.5], speckles: [14, 24],
-  speckleSize: [1.1, 2.4], fringeStep: 1.8, fringeLength: [2.2, 3.8],
+  hatchPatches: 2, hatchStrokes: [26, 40], hatchLength: [5, 10], speckles: [20, 34],
+  speckleSize: [1.1, 2.4], shadeStrokes: [34, 54], fringeStep: 1.6, fringeLength: [2.2, 4.2],
 };
 const HIND_TEXTURE: TextureTuning = {
-  hatchPatches: 1, hatchStrokes: [12, 20], hatchLength: [4, 8], speckles: [8, 16],
-  speckleSize: [1, 2.1], fringeStep: 1.6, fringeLength: [2.6, 4.4],
+  hatchPatches: 1, hatchStrokes: [20, 30], hatchLength: [4, 8.5], speckles: [12, 22],
+  speckleSize: [1, 2.1], shadeStrokes: [24, 38], fringeStep: 1.5, fringeLength: [2.6, 4.6],
 };
 
 /** Per family the markings lean the same way the silhouette does. */
 const RECIPES: Record<Family, FamilyRecipe> = {
   rounded: {
-    fore: { ...FORE_PATTERN, veins: [10, 12], bandWaves: [1.8, 3], bandAmplitude: [0.03, 0.06], bandTilt: [-0.18, -0.04], eyespot: 0.7, eyespotRadius: [8, 13] },
+    fore: { ...FORE_PATTERN, veins: [10, 12], bandWaves: [1.8, 3], bandAmplitude: [0.03, 0.06], bandTilt: [-0.18, -0.04], eyespot: 0.85, eyespotRadius: [10, 16] },
     hind: { ...HIND_PATTERN, eyespot: 0.4 },
     foreTexture: FORE_TEXTURE, hindTexture: HIND_TEXTURE,
   },
   pointed: {
-    fore: { ...FORE_PATTERN, veins: [9, 10], bands: [2, 2], bandWaves: [1, 2], bandAmplitude: [0.012, 0.03], bandTilt: [-0.3, -0.14], bandStart: [0.24, 0.34], doubleBand: 0.65, eyespot: 0.2, discalBar: 0.7 },
+    fore: { ...FORE_PATTERN, veins: [9, 10], bands: [2, 2], bandWaves: [1, 2], bandAmplitude: [0.012, 0.03], bandTilt: [-0.3, -0.14], bandStart: [0.24, 0.34], doubleBand: 0.65, eyespot: 0.2, discalBar: 0.7, shade: 0.9, shadeWidth: [0.13, 0.22] },
     hind: { ...HIND_PATTERN, bands: [1, 1], bandWaves: [1.4, 2.4], eyespot: 0.15 },
     foreTexture: { ...FORE_TEXTURE, hatchLength: [4.5, 8], speckles: [8, 16] },
     hindTexture: HIND_TEXTURE,
@@ -78,14 +93,14 @@ const RECIPES: Record<Family, FamilyRecipe> = {
     hindTexture: { ...HIND_TEXTURE, hatchPatches: 2 },
   },
   scalloped: {
-    fore: { ...FORE_PATTERN, veins: [10, 12], bands: [3, 4], bandWaves: [5, 8], bandAmplitude: [0.025, 0.05], bandTilt: [-0.16, -0.04], doubleBand: 0.6, eyespot: 0.35 },
+    fore: { ...FORE_PATTERN, veins: [10, 12], bands: [3, 4], bandWaves: [5, 8], bandAmplitude: [0.025, 0.05], bandTilt: [-0.16, -0.04], doubleBand: 0.6, eyespot: 0.35, shade: 0.55, shadeWidth: [0.07, 0.13] },
     hind: { ...HIND_PATTERN, bands: [2, 3], bandWaves: [4, 7] },
     foreTexture: { ...FORE_TEXTURE, speckles: [22, 34], speckleSize: [1, 2] },
     hindTexture: { ...HIND_TEXTURE, speckles: [14, 24] },
   },
   tailed: {
-    fore: { ...FORE_PATTERN, veins: [8, 10], bands: [2, 2], eyespot: 0.9, eyespotRadius: [9, 14] },
-    hind: { ...HIND_PATTERN, veins: [6, 7], bands: [1, 1], eyespot: 0.65, eyespotRadius: [6, 10] },
+    fore: { ...FORE_PATTERN, veins: [8, 10], bands: [2, 2], eyespot: 0.95, eyespotRadius: [11, 17], shade: 0.5 },
+    hind: { ...HIND_PATTERN, veins: [6, 7], bands: [1, 1], eyespot: 0.8, eyespotRadius: [7, 12] },
     foreTexture: { ...FORE_TEXTURE, hatchStrokes: [10, 16], speckles: [10, 18] },
     hindTexture: { ...HIND_TEXTURE, hatchStrokes: [8, 14] },
   },
@@ -95,14 +110,25 @@ const RECIPES: Record<Family, FamilyRecipe> = {
 function place(lines: readonly LayerLine[], wing: number, outline: Polyline, occluders: readonly Polyline[]): Mark[] {
   const marks: Mark[] = [];
   for (const line of lines) {
-    // Fringe is meant to cross the margin, so it is hidden but never bounded.
-    let pieces = line.layer === 'fringe' ? [line.points] : clip(line.points, outline, 'inside');
+    // Edges and fringe belong on the margin, so they are hidden but never bounded.
+    let pieces = UNBOUNDED_LAYERS.includes(line.layer) ? [line.points] : clip(line.points, outline, 'inside');
     for (const occluder of occluders) pieces = pieces.flatMap(piece => clip(piece, occluder, 'outside'));
     for (const points of pieces) marks.push({ layer: line.layer, wing, points });
   }
   return marks;
 }
 const flip = (mark: Mark): Mark => ({ layer: mark.layer, wing: mark.wing, points: mirror(mark.points) });
+
+/**
+ * Tremor is applied before clipping, so a mark that wanders past the margin is
+ * still trimmed there and containment stays exact. Short marks are a single
+ * gesture already and are left alone.
+ */
+function tremble(lines: readonly LayerLine[], ink: Dice): LayerLine[] {
+  return lines.map(line => line.points.length < MIN_ROUGHEN_POINTS
+    ? line
+    : { layer: line.layer, points: roughen(line.points, ink, ink.range(0.4, 0.9), ink.int(1, 3), null) });
+}
 
 export function generateMoth(input: string): Moth {
   const seed = input.normalize('NFC').trim();
@@ -114,7 +140,7 @@ export function generateMoth(input: string): Moth {
   const rise = range(41, 76);
   const depth = range(43, 67);
   const thoraxWidth = range(7, 11);
-  const bodyLength = range(43, 63);
+  const bodyLength = range(46, 74);
   const tipY = family === 'swept' ? -rise * 0.2 : -rise;
   const tipX = family === 'swept' ? width * 0.9 : width;
   const shoulder: Point = [thoraxWidth * 0.45, -12];
@@ -153,18 +179,24 @@ export function generateMoth(input: string): Moth {
     const offset = Math.sin(t * Math.PI) * Math.sin(t * Math.PI * 12) * 1.2;
     return [x + offset, y + offset * 0.65];
   });
-  const frontShape = scallop(front);
-  const backShape = scallop(back);
+  const ink = dice(seed, 'ink');
+  // Tremor goes on the silhouette before anything is measured from it, so the
+  // fields, the marks and the clipping all agree with the line that is drawn.
+  const tremor = ink.range(0.9, 1.7);
+  const frontShape = roughen(scallop(front), ink, tremor, ink.int(4, 7), marginRange(front));
+  const backShape = roughen(scallop(back), ink, tremor, ink.int(4, 7), marginRange(back));
   const stalk = contour([3, -26], [
     [[10, -40], [range(17, 26), -47], [range(23, 34), -range(48, 62)]],
   ]);
   const antennae: Polyline[] = [stalk, mirror(stalk)];
   const feathered = structure.unit() > 0.35;
   if (feathered) {
-    for (let i = 3; i < 18; i += 2) {
+    // Bipectinate barbs, one per sample rather than every other, so the antenna
+    // reads as a dense feather instead of a comb.
+    for (let i = 2; i < 19; i++) {
       const point = stalk[i]!;
-      const length = Math.sin(i / 20 * Math.PI) * 6;
-      const branch: Polyline = [[point[0] - length, point[1] - 3], point, [point[0] + length, point[1] + 2]];
+      const length = Math.sin(i / 20 * Math.PI) * 7.5;
+      const branch: Polyline = [[point[0] - length, point[1] - 3.4], point, [point[0] + length, point[1] + 2.2]];
       antennae.push(branch, mirror(branch));
     }
   }
@@ -183,26 +215,60 @@ export function generateMoth(input: string): Moth {
     { ...recipe.foreTexture, fringeFrom: foreMargin + SEGMENT_SAMPLES, fringeTo: foreMarginEnd }, texture);
   const hindTexture = (): LayerLine[] => wingTexture(hindField, backShape,
     { ...recipe.hindTexture, fringeFrom: hindMargin, fringeTo: hindMarginEnd }, texture);
-  // Both sides are clipped in right-wing coordinates and the left is mirrored, so
-  // symmetry is exact. Texture draws twice, giving each side its own wear.
-  const hindRight = hindTexture();
-  const hindLeft = hindTexture();
-  const foreRight = foreTexture();
-  const foreLeft = foreTexture();
-  const marks: Mark[] = [
-    ...place([...hindPattern, ...hindRight], 0, backShape, [frontShape]),
-    ...place([...hindPattern, ...hindLeft], 1, backShape, [frontShape]).map(flip),
-    ...place([...forePattern, ...foreRight], 2, frontShape, []),
-    ...place([...forePattern, ...foreLeft], 3, frontShape, []).map(flip),
+  // The outline is drawn twice: once as the shape itself, once as a searching
+  // second pass. Both sides are clipped in right-wing coordinates and the left
+  // is mirrored, so structure stays symmetric while the ink does not.
+  const edge = (outline: Polyline, span: readonly [number, number]): LayerLine[] => [
+    { layer: 'edge', points: outline },
+    { layer: 'edge', points: roughen(outline, ink, ink.range(0.5, 1.1), ink.int(3, 6), span) },
   ];
+  const foreSpan = marginRange(frontShape);
+  const hindSpan = marginRange(backShape);
+  // Wear is drawn per side: the bite removes marks, fringe and the margin itself
+  // inside its hole, and the torn rim is drawn in place of what it took.
+  const wear = (outline: Polyline, span: readonly [number, number], chance: number) => {
+    const holes: Polyline[] = [];
+    const rims: LayerLine[] = [];
+    const bites = texture.chance(chance) ? texture.int(1, 2) : 0;
+    for (let index = 0; index < bites; index++) {
+      const bite = tear(outline, span, texture);
+      holes.push(bite.hole);
+      for (const piece of clip(bite.rim, outline, 'inside')) rims.push({ layer: 'edge', points: piece });
+    }
+    return { holes, rims };
+  };
+  // The pattern is trembled once and shared, so both sides carry the same hand.
+  // Asymmetry comes from the texture, the searching second outline and the wear.
+  const foreInked = tremble(forePattern, ink);
+  const hindInked = tremble(hindPattern, ink);
+  const torn: boolean[] = [];
+  const side = (
+    outline: Polyline, span: readonly [number, number], chance: number,
+    marking: readonly LayerLine[], wearing: LayerLine[], wing: number, occluders: readonly Polyline[],
+  ): Mark[] => {
+    const worn = wear(outline, span, chance);
+    torn[wing] = worn.holes.length > 0;
+    const lines = [...edge(outline, span), ...worn.rims, ...marking, ...tremble(wearing, ink)];
+    const placed = place(lines, wing, outline, [...occluders, ...worn.holes]);
+    return wing % 2 === 0 ? placed : placed.map(flip);
+  };
+  const marks: Mark[] = [
+    ...side(backShape, hindSpan, HIND_TEAR, hindInked, hindTexture(), 0, [frontShape]),
+    ...side(backShape, hindSpan, HIND_TEAR, hindInked, hindTexture(), 1, [frontShape]),
+    ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 2, []),
+    ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 3, []),
+  ];
+  const parts = buildBody(thoraxWidth, bodyLength, texture);
 
   return {
     seed, generatorVersion: GENERATOR_VERSION, family,
     wings: [backShape, mirror(backShape), frontShape, mirror(frontShape)],
-    body: [ellipse(thoraxWidth * 0.73, bodyLength / 2, bodyLength / 2 + 1), ellipse(thoraxWidth, 18, -2), ellipse(thoraxWidth * 0.69, 8, -22)],
+    body: parts.shapes,
     antennae,
+    bristles: parts.bristles,
+    torn,
     marks,
-    bodyLines: bodyTexture(thoraxWidth, bodyLength, texture),
+    bodyLines: parts.creases,
     wingspan: Math.max(...frontShape.map(([x]) => x), ...backShape.map(([x]) => x)) * 2,
   };
 }

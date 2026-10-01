@@ -45,6 +45,14 @@ export interface PatternRecipe {
   /** Outer ring radius in SVG units, converted through the local metric. */
   readonly eyespotRadius: readonly [number, number];
   readonly discalBar: number;
+  /**
+   * A dark mass hatched against one of the bands. Without one the wing stays a
+   * pale field of thin lines and the specimen reads as decorative rather than
+   * as something found in the dark.
+   */
+  readonly shade: number;
+  readonly shadeWidth: readonly [number, number];
+  readonly shadeStrokes: readonly [number, number];
 }
 
 /**
@@ -70,25 +78,47 @@ export function wingPattern(field: WingField, recipe: PatternRecipe, dice: Dice)
 
   const bandCount = dice.int(recipe.bands[0], recipe.bands[1]);
   const [spanLow, spanHigh] = recipe.bandSpan;
+  /** Keeps the last band's path so the dark mass can sit flush against a line. */
+  let anchor: ((u: number) => number) | null = null;
   for (let index = 0; index < bandCount; index++) {
     const spread = bandCount === 1 ? 0.5 : index / (bandCount - 1);
-    const seat = spanLow + (spanHigh - spanLow) * spread + dice.range(-0.025, 0.025);
+    const middle = spanLow + (spanHigh - spanLow) * spread + dice.range(-0.025, 0.025);
     const waves = dice.range(recipe.bandWaves[0], recipe.bandWaves[1]);
     const amplitude = dice.range(recipe.bandAmplitude[0], recipe.bandAmplitude[1]);
     const drift = dice.range(0, Math.PI * 2);
     const tilt = dice.range(recipe.bandTilt[0], recipe.bandTilt[1]);
     const start = dice.range(recipe.bandStart[0], recipe.bandStart[1]);
+    const seat = (u: number): number => {
+      const along = (u - start) / (BAND_END - start);
+      const core = middle + tilt * (u - 0.5) + Math.sin(drift + u * Math.PI * waves) * amplitude;
+      // Both ends run out to the margin so the band terminates on an edge.
+      const inset = Math.min(1, Math.max(0, along) / BAND_ATTACH, Math.max(0, 1 - along) / BAND_ATTACH);
+      return 1 - (1 - core) * inset;
+    };
     const band = (offset: number): Polyline =>
       Array.from({ length: BAND_SAMPLES + 1 }, (_, step) => {
-        const along = step / BAND_SAMPLES;
-        const u = start + (BAND_END - start) * along;
-        const core = seat + offset + tilt * (u - 0.5) + Math.sin(drift + u * Math.PI * waves) * amplitude;
-        // Both ends run out to the margin so the band terminates on an edge.
-        const inset = Math.min(1, along / BAND_ATTACH, (1 - along) / BAND_ATTACH);
-        return field.at(u, 1 - (1 - core) * inset);
+        const u = start + (BAND_END - start) * (step / BAND_SAMPLES);
+        return field.at(u, seat(u) + offset);
       });
     lines.push({ layer: 'band', points: band(0) });
     if (dice.chance(recipe.doubleBand)) lines.push({ layer: 'band', points: band(DOUBLE_BAND_GAP) });
+    anchor = seat;
+  }
+
+  if (anchor && dice.chance(recipe.shade)) {
+    const edge = anchor;
+    const width = dice.range(recipe.shadeWidth[0], recipe.shadeWidth[1]);
+    const strokes = dice.int(recipe.shadeStrokes[0], recipe.shadeStrokes[1]);
+    // Kept clear of the band ends, which ramp onto the margin and would turn the
+    // mass into a rim rather than a blotch on the wing.
+    const from = dice.range(0.28, 0.44);
+    const to = dice.range(0.78, 0.93);
+    const inward = dice.chance(0.65) ? -1 : 1;
+    for (let index = 0; index < strokes; index++) {
+      const u = from + (to - from) * (index / (strokes - 1));
+      const seat = edge(u) + dice.range(-0.012, 0.012);
+      lines.push({ layer: 'shade', points: [field.at(u, seat), field.at(u, seat + width * inward)] });
+    }
   }
 
   if (dice.chance(recipe.discalBar)) {
@@ -111,16 +141,21 @@ export function wingPattern(field: WingField, recipe: PatternRecipe, dice: Dice)
     const [across, along] = field.metric(u, v);
     // A circle of `radius` SVG units becomes an ellipse in (u, v), which bends
     // with the wing exactly as a scale pattern on a curved surface would.
-    const ring = (scale: number): Polyline =>
+    const ring = (scale: number, driftU: number, driftV: number): Polyline =>
       Array.from({ length: RING_SAMPLES + 1 }, (_, step) => {
         const angle = (step / RING_SAMPLES) * Math.PI * 2;
         return field.at(
-          u + (Math.cos(angle) * radius * scale) / Math.max(across, MIN_METRIC),
-          v + (Math.sin(angle) * radius * scale) / Math.max(along, MIN_METRIC),
+          u + ((Math.cos(angle) * scale + driftU) * radius) / Math.max(across, MIN_METRIC),
+          v + ((Math.sin(angle) * scale + driftV) * radius) / Math.max(along, MIN_METRIC),
         );
       });
-    for (let index = 0; index < rings; index++) lines.push({ layer: 'eyespot', points: ring((index + 1) / rings) });
-    lines.push({ layer: 'pupil', points: ring(PUPIL_SCALE) });
+    // Rings drift off centre and the pupil sits off axis; a tidy bullseye reads
+    // as decoration, an uneven one reads as an eye.
+    for (let index = 0; index < rings; index++) {
+      const scale = (index + 1) / rings;
+      lines.push({ layer: 'eyespot', points: ring(scale, dice.range(-0.1, 0.1) * scale, dice.range(-0.1, 0.1) * scale) });
+    }
+    lines.push({ layer: 'pupil', points: ring(PUPIL_SCALE, dice.range(-0.3, 0.3), dice.range(-0.3, 0.3)) });
   }
   return lines;
 }

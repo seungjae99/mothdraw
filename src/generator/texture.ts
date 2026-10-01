@@ -12,6 +12,8 @@ export interface TextureRecipe {
   readonly hatchStrokes: readonly [number, number];
   /** Stroke length in SVG units. */
   readonly hatchLength: readonly [number, number];
+  /** A dense wedge where the wing meets the body; moths are darkest there. */
+  readonly shadeStrokes: readonly [number, number];
   readonly speckles: readonly [number, number];
   readonly speckleSize: readonly [number, number];
   /** First outline index that carries fringe; the leading edge is left bare. */
@@ -48,6 +50,15 @@ export function wingTexture(
     }
   }
 
+  const shade = dice.int(recipe.shadeStrokes[0], recipe.shadeStrokes[1]);
+  for (let index = 0; index < shade; index++) {
+    const u = dice.range(0.1, 0.86);
+    const v = dice.range(0.08, 0.44);
+    const [, along] = field.metric(u, v);
+    const half = dice.range(3, 7.5) / 2 / Math.max(along, MIN_METRIC);
+    lines.push({ layer: 'hatch', points: [field.at(u, v - half), field.at(u, v), field.at(u, v + half)] });
+  }
+
   const speckles = dice.int(recipe.speckles[0], recipe.speckles[1]);
   for (let index = 0; index < speckles; index++) {
     const u = dice.range(0.08, 0.92);
@@ -82,35 +93,51 @@ export function wingTexture(
   return lines;
 }
 
-/** Abdomen creases and thorax tufts; the creases cross the midline so they stay symmetric. */
-export function bodyTexture(thoraxWidth: number, bodyLength: number, dice: Dice): Polyline[] {
-  const lines: Polyline[] = [];
-  const rx = thoraxWidth * 0.73;
-  const ry = bodyLength / 2;
-  const cy = ry + 1;
-  const creases = dice.int(4, 6);
-  for (let index = 1; index <= creases; index++) {
-    const y = cy - ry + (2 * ry * index) / (creases + 1);
-    const half = rx * Math.sqrt(Math.max(0, 1 - ((y - cy) / ry) ** 2)) * 0.82;
-    lines.push([[-half, y - 0.6], [0, y + 0.9], [half, y - 0.6]]);
-  }
-  const tufts = dice.int(10, 15);
-  for (let index = 0; index < tufts; index++) {
-    const angle = dice.range(0, Math.PI * 2);
-    const onHead = dice.chance(0.3);
-    const rimX = onHead ? thoraxWidth * 0.69 : thoraxWidth;
-    const rimY = onHead ? 8 : 18;
-    const centre = onHead ? -22 : -2;
-    const point: Point = [Math.cos(angle) * rimX, centre + Math.sin(angle) * rimY];
-    const normal = Math.hypot(Math.cos(angle) / rimX, Math.sin(angle) / rimY) || 1;
-    const reach = dice.range(2.2, 4.6);
-    lines.push([
-      point,
-      [
-        point[0] + ((Math.cos(angle) / rimX) / normal) * reach,
-        point[1] + ((Math.sin(angle) / rimY) / normal) * reach,
-      ],
-    ]);
-  }
-  return lines;
+/** How far past the margin a tear reaches, so the bite always breaks the edge. */
+const TEAR_LIFT = 8;
+
+export interface Tear {
+  /** Everything inside this is gone: marks, fringe and the outline itself. */
+  readonly hole: Polyline;
+  /** The torn rim, to be drawn in place of the margin it removed. */
+  readonly rim: Polyline;
+}
+
+/**
+ * A bite out of the wing margin. Damage is drawn per side, which is the one
+ * place the specimen is allowed to be asymmetric, and it is what turns a tidy
+ * plate into something that was found rather than designed.
+ */
+export function tear(outline: Polyline, span: readonly [number, number], dice: Dice): Tear {
+  const seat = dice.range(span[0] + 8, span[1] - 8);
+  const spread = dice.range(2, 6);
+  const depth = dice.range(4, 11);
+  const ahead = atIndex(outline, seat + 1);
+  const behind = atIndex(outline, seat - 1);
+  const length = Math.hypot(ahead[0] - behind[0], ahead[1] - behind[1]) || 1;
+  const facing = signedArea(outline) >= 0 ? 1 : -1;
+  const outX = ((ahead[1] - behind[1]) / length) * facing;
+  const outY = ((behind[0] - ahead[0]) / length) * facing;
+  const lift = (index: number): Point => {
+    const edge = atIndex(outline, index);
+    return [edge[0] + outX * TEAR_LIFT, edge[1] + outY * TEAR_LIFT];
+  };
+  // A ragged rim rather than one apex, so the wing reads as torn, not trimmed.
+  const inward = (index: number, sink: number): Point => {
+    const edge = atIndex(outline, index);
+    return [
+      edge[0] - outX * depth * sink + dice.range(-1.6, 1.6),
+      edge[1] - outY * depth * sink + dice.range(-1.6, 1.6),
+    ];
+  };
+  const start = lift(seat - spread);
+  const end = lift(seat + spread);
+  const rim: Polyline = [
+    start,
+    inward(seat - spread * 0.5, dice.range(0.4, 0.8)),
+    inward(seat, 1),
+    inward(seat + spread * 0.5, dice.range(0.4, 0.8)),
+    end,
+  ];
+  return { hole: [...rim, start], rim };
 }
