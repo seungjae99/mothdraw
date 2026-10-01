@@ -6,15 +6,18 @@ const bundle = await build({
   stdin: { contents: ENTRY, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
-const { generateMoth, FAMILIES, MARK_LAYERS, TEXTURE_LAYERS, SPECIMEN_SEEDS, SURVEY_SEEDS, pointInPolygon } =
+const { generateMoth, FAMILIES, MARK_LAYERS, TEXTURE_LAYERS, UNBOUNDED_LAYERS, SPECIMEN_SEEDS, SURVEY_SEEDS, pointInPolygon } =
   await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 /** Line counts stay well under these so a runaway loop fails loudly. */
-const MAX_MARKS = 700;
-const MAX_MARK_POINTS = 3200;
+const MAX_MARKS = 1300;
+const MAX_MARK_POINTS = 6000;
 /** Fringe crosses the margin; nothing may drift further than one stroke away. */
 const MAX_FRINGE_CLEARANCE = 5;
-const PATTERN_LAYERS = MARK_LAYERS.filter(layer => !TEXTURE_LAYERS.includes(layer));
+/** The drawn outline trembles around the real one and must not wander off it. */
+const MAX_EDGE_CLEARANCE = 3;
+const PATTERN_LAYERS = MARK_LAYERS.filter(
+  layer => !TEXTURE_LAYERS.includes(layer) && !UNBOUNDED_LAYERS.includes(layer));
 
 const specimens = SPECIMEN_SEEDS.map(generateMoth);
 const stress = Array.from({ length: 200 }, (_, index) => generateMoth(`stress-${index}`));
@@ -47,7 +50,8 @@ function distanceToOutline(point, outline) {
 // Structure: unchanged invariants from the silhouette stage.
 for (const moth of all) {
   assert.deepEqual(moth, generateMoth(moth.seed), `${moth.seed}: seed must reproduce all geometry`);
-  const lines = [...moth.wings, ...moth.body, ...moth.antennae, ...moth.bodyLines, ...moth.marks.map(m => m.points)];
+  const lines = [...moth.wings, ...moth.body, ...moth.antennae, ...moth.bodyLines, ...moth.bristles,
+    ...moth.marks.map(m => m.points)];
   for (const line of lines) {
     for (const [x, y] of line) {
       assert.ok(Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) < 160 && y > -106 && y < 134,
@@ -88,7 +92,7 @@ for (const moth of sampled) {
     for (let index = 0; index < mark.points.length - 1; index++) {
       // Clipped endpoints land on the outline, so containment is read at midpoints.
       const inner = midpoint(mark.points[index], mark.points[index + 1]);
-      if (mark.layer !== 'fringe') {
+      if (!UNBOUNDED_LAYERS.includes(mark.layer)) {
         assert.ok(pointInPolygon(inner, own), `${moth.seed}: ${mark.layer} outside its wing`);
       }
       if (covering) {
@@ -97,19 +101,33 @@ for (const moth of sampled) {
     }
   }
   for (const [a, b] of [[0, 1], [2, 3]]) {
-    assert.deepEqual(marksOn(moth, a, PATTERN_LAYERS).map(flip), marksOn(moth, b, PATTERN_LAYERS),
-      `${moth.seed}: pattern must be bilaterally symmetric`);
+    // Wear is the one thing allowed to break the mirror, and it does so by
+    // removing pattern, so only intact pairs can be compared outright.
+    if (!moth.torn[a] && !moth.torn[b]) {
+      assert.deepEqual(marksOn(moth, a, PATTERN_LAYERS).map(flip), marksOn(moth, b, PATTERN_LAYERS),
+        `${moth.seed}: pattern must be bilaterally symmetric`);
+    }
     assert.notDeepEqual(marksOn(moth, a, TEXTURE_LAYERS).map(flip), marksOn(moth, b, TEXTURE_LAYERS),
       `${moth.seed}: texture must differ between sides`);
   }
 }
 
-// Fringe deliberately leaves the wing, but only by one stroke.
+// Fringe and the drawn outline sit on or past the margin, but only just.
 for (const moth of specimens) {
-  for (const mark of moth.marks.filter(entry => entry.layer === 'fringe')) {
-    for (const point of mark.points) {
-      const clearance = distanceToOutline(point, moth.wings[mark.wing]);
-      assert.ok(clearance <= MAX_FRINGE_CLEARANCE, `${moth.seed}: fringe drifted ${clearance.toFixed(2)} from the margin`);
+  for (const mark of moth.marks) {
+    if (mark.layer === 'fringe') {
+      for (const point of mark.points) {
+        const clearance = distanceToOutline(point, moth.wings[mark.wing]);
+        assert.ok(clearance <= MAX_FRINGE_CLEARANCE, `${moth.seed}: fringe drifted ${clearance.toFixed(2)} from the margin`);
+      }
+    }
+    if (mark.layer === 'edge') {
+      for (const point of mark.points) {
+        // A torn rim cuts inwards; everything else hugs the outline.
+        const clearance = distanceToOutline(point, moth.wings[mark.wing]);
+        assert.ok(pointInPolygon(point, moth.wings[mark.wing]) || clearance <= MAX_EDGE_CLEARANCE,
+          `${moth.seed}: outline drifted ${clearance.toFixed(2)} off the wing`);
+      }
     }
   }
 }
@@ -118,7 +136,9 @@ assert.equal(new Set(specimens.map(m => JSON.stringify(m.wings))).size, 20, '20 
 assert.equal(new Set(SURVEY_SEEDS).size, 100, '100 unique survey seeds');
 assert.deepEqual(SURVEY_SEEDS.slice(0, 20), SPECIMEN_SEEDS, 'the fixed plate is a prefix of the survey');
 assert.equal(new Set(specimens.map(m => m.family)).size, FAMILIES.length, 'all families represented');
-assert.ok(specimens.every(m => new Set(m.marks.map(mark => mark.layer)).size >= 5), 'every specimen carries most layers');
+assert.ok(specimens.every(m => new Set(m.marks.map(mark => mark.layer)).size >= 6), 'every specimen carries most layers');
+assert.ok(specimens.some(m => m.torn.some(Boolean)) && specimens.some(m => !m.torn.some(Boolean)),
+  'the fixed plate must show both worn and intact specimens');
 assert.throws(() => generateMoth('  '));
 assert.throws(() => generateMoth('x'.repeat(161)));
 
