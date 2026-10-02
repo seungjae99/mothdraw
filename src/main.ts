@@ -13,9 +13,9 @@ const app = document.querySelector<HTMLElement>('#app');
 if (!app) throw new Error('앱 루트 요소를 찾을 수 없습니다.');
 
 app.innerHTML = `
-  <header><a class="brand" href="./">M<span class="brand-star">✳</span>THDRAW</a><span class="edition">FIELD NOTES / 001</span></header>
-  <section class="intro"><div class="eyebrow">A STUDY OF IMAGINARY LEPIDOPTERA</div>
-  <h1>Shapes of the night<span>밤의 형태들</span></h1></section>
+  <header><span class="brand">M<span class="brand-star">✳</span>THDRAW</span><span class="edition">GENERATOR ${GENERATOR_VERSION}</span></header>
+  <div class="figure" id="figure" title="눌러서 바로 완성"></div>
+  <p class="status" id="status" aria-live="polite"></p>
   <form class="console" autocomplete="off">
     <div class="field seed">
       <label for="seed">시드</label>
@@ -39,19 +39,10 @@ app.innerHTML = `
     <div class="actions">
       <button type="submit" class="primary">그리기</button>
       <button type="button" id="shuffle">무작위 시드</button>
+      <button type="button" id="replay">다시 그리기</button>
+      <button type="button" id="save">SVG 저장</button>
     </div>
-  </form>
-  <section class="stage">
-    <div class="figure" id="figure" title="눌러서 바로 완성"></div>
-    <div class="caption">
-      <span id="caption-seed" aria-live="polite"></span>
-      <span class="caption-actions">
-        <button type="button" id="replay">다시 그리기</button>
-        <button type="button" id="save">SVG 저장</button>
-      </span>
-    </div>
-  </section>
-  <footer><span>MOTHDRAW / GENERATOR ${GENERATOR_VERSION}</span><span>허구의 종을 위한 작은 자연사 도감</span></footer>`;
+  </form>`;
 
 const form = app.querySelector<HTMLFormElement>('.console')!;
 const seedInput = app.querySelector<HTMLInputElement>('#seed')!;
@@ -61,7 +52,7 @@ const strangeInput = app.querySelector<HTMLInputElement>('#strange')!;
 const densityValue = app.querySelector<HTMLOutputElement>('#density-value')!;
 const strangeValue = app.querySelector<HTMLOutputElement>('#strange-value')!;
 const figure = app.querySelector<HTMLElement>('#figure')!;
-const captionSeed = app.querySelector<HTMLElement>('#caption-seed')!;
+const status = app.querySelector<HTMLElement>('#status')!;
 const saveButton = app.querySelector<HTMLButtonElement>('#save')!;
 
 function randomSeed(): string {
@@ -103,14 +94,14 @@ function draw(request: Request): void {
   try {
     moth = generateMoth(request.seed, request.options);
   } catch (failure) {
-    captionSeed.textContent = failure instanceof Error ? failure.message : '시드를 확인해주세요.';
+    status.textContent = failure instanceof Error ? failure.message : '시드를 확인해주세요.';
     return;
   }
   drawing?.cancel();
   current = moth;
   shown = signature(request);
   writeRequest(request);
-  captionSeed.textContent = `${moth.seed} · ${FAMILY_LABELS[moth.family]} · ${moth.wingspan.toFixed(0)} u`
+  status.textContent = `${moth.seed} · ${FAMILY_LABELS[moth.family]} · ${moth.wingspan.toFixed(0)} u`
     + (moth.torn.some(Boolean) ? ' · 손상' : '');
   saveButton.disabled = true;
   drawing = drawMoth(figure, moth, () => { saveButton.disabled = false; });
