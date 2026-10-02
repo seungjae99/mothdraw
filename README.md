@@ -64,3 +64,7 @@ Every specimen differs in overall size, wing pair count, antenna length and body
   <img src="docs/gallery/nocturne-069.svg" width="520" alt="nocturne-069">
   <br><sub><code>nocturne-069</code></sub>
 </p>
+
+## License
+
+[MIT](LICENSE)

@@ -64,3 +64,7 @@ npm run dev
   <img src="docs/gallery/nocturne-069.svg" width="520" alt="nocturne-069">
   <br><sub><code>nocturne-069</code></sub>
 </p>
+
+## 라이선스
+
+[MIT](LICENSE)
