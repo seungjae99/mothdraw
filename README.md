@@ -22,17 +22,17 @@ npm run dev
 
 ## Controls
 
-One specimen at a time. Set a seed and the three controls, press **그리기**, and the drawing plays.
+One specimen at a time. Set a seed and the three controls, press **Draw**, and the drawing plays.
 
 ![Four specimens from the same seed at the ends of each slider](docs/dials.svg)
 
 | Control | What it does |
 | --- | --- |
-| **형태** — form | One of five families (rounded, pointed, swept, scalloped, tailed), or left to the seed |
-| **무늬 밀도** — pattern density | How much wing venation, banding, shading, hatching, speckling and fringe |
-| **기묘함** — strangeness | Line tremor, exaggerated proportions, eyespot size, body fur, torn margins, wing pair count. At zero nothing is torn and there are always two pairs |
+| **Form** | One of five families (rounded, pointed, swept, scalloped, tailed), or left to the seed |
+| **Pattern density** | How much wing venation, banding, shading, hatching, speckling and fringe |
+| **Strangeness** | Line tremor, exaggerated proportions, eyespot size, body fur, torn margins, wing pair count. At zero nothing is torn and there are always two pairs |
 
-Both sliders sit at the middle by default. Click the figure or press <kbd>Esc</kbd> to skip to the finished drawing; under `prefers-reduced-motion` it appears at once. The seed and the settings ride in the URL hash, so a link reproduces the same specimen, and **SVG 저장** writes a standalone file.
+Both sliders sit at the middle by default. Click the figure or press <kbd>Esc</kbd> to skip to the finished drawing; under `prefers-reduced-motion` it appears at once. The seed and the settings ride in the URL hash, so a link reproduces the same specimen, and **Save SVG** writes a standalone file.
 
 ## Gallery
 
