@@ -106,10 +106,10 @@ function drawing(moth, { draw = 6.5, hold = 2.5, buckets = 80 }) {
 const GALLERY = ['nocturne-070', 'nocturne-064', 'nocturne-001', 'nocturne-045', 'nocturne-069'];
 const DRAWN = 'nocturne-022';
 const DIALS = [
-  { label: '무늬 밀도 0 / density 0', options: { density: 0, strangeness: 0.5 } },
-  { label: '무늬 밀도 1 / density 1', options: { density: 1, strangeness: 0.5 } },
-  { label: '기묘함 0 / strangeness 0', options: { density: 0.5, strangeness: 0 } },
-  { label: '기묘함 1 / strangeness 1', options: { density: 0.5, strangeness: 1 } },
+  { label: 'pattern density 0', options: { density: 0, strangeness: 0.5 } },
+  { label: 'pattern density 1', options: { density: 1, strangeness: 0.5 } },
+  { label: 'strangeness 0', options: { density: 0.5, strangeness: 0 } },
+  { label: 'strangeness 1', options: { density: 0.5, strangeness: 1 } },
 ];
 
 const destination = resolve(process.argv[2] ?? 'docs');

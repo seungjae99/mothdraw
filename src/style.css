@@ -6,7 +6,7 @@ html,body{height:100%}body{margin:0}
 /* Close to the figure's own 340x260, so the specimen fills the frame. */
 main{height:100dvh;max-width:920px;margin:auto;padding:0 40px 26px;display:flex;flex-direction:column;gap:12px}
 header{flex:none;display:flex;justify-content:space-between;align-items:center;height:68px}
-.brand{font-size:20px;font-weight:700;letter-spacing:3px}.brand-star{color:#8a4b35;margin:0 2px}
+.brand{font-size:20px;font-weight:700;letter-spacing:3px}
 .edition{font-size:9px;letter-spacing:2.2px;color:#8b8f80}
 
 .figure{flex:1 1 auto;min-height:0;background:#f9f7f0;border:1px solid #d8d7ca;cursor:pointer}

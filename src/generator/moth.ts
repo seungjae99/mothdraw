@@ -230,7 +230,7 @@ function tune(recipe: FamilyRecipe, dial: Dials): FamilyRecipe {
 
 export function generateMoth(input: string, choices?: Partial<MothOptions>): Moth {
   const seed = input.normalize('NFC').trim();
-  if (!seed || seed.length > 160) throw new Error('시드는 1~160자로 입력해주세요.');
+  if (!seed || seed.length > 160) throw new Error('Seed must be 1 to 160 characters.');
   const options = normalizeOptions(choices);
   const dial = dials(options);
   const structure = dice(seed, 'structure');

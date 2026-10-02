@@ -10,37 +10,37 @@ import { readRequest, signature, writeRequest, type Request } from './ui/locatio
 const SEED_WORDS = ['nocturne', 'vesper', 'umbra', 'tenebra', 'cinder', 'noctua', 'velvet', 'ashen', 'lumen', 'hollow'];
 
 const app = document.querySelector<HTMLElement>('#app');
-if (!app) throw new Error('앱 루트 요소를 찾을 수 없습니다.');
+if (!app) throw new Error('App root element not found.');
 
 app.innerHTML = `
-  <header><span class="brand">M<span class="brand-star">✳</span>THDRAW</span><span class="edition">GENERATOR ${GENERATOR_VERSION}</span></header>
-  <div class="figure" id="figure" title="눌러서 바로 완성"></div>
+  <header><span class="brand">MOTHDRAW</span><span class="edition">GENERATOR ${GENERATOR_VERSION}</span></header>
+  <div class="figure" id="figure" title="Click to finish the drawing"></div>
   <p class="status" id="status" aria-live="polite"></p>
   <form class="console" autocomplete="off">
     <div class="field seed">
-      <label for="seed">시드</label>
-      <input id="seed" name="seed" type="text" maxlength="160" placeholder="아무 문자열" required>
+      <label for="seed">Seed</label>
+      <input id="seed" name="seed" type="text" maxlength="160" placeholder="any text" required>
     </div>
     <div class="field">
-      <label for="form">형태</label>
+      <label for="form">Form</label>
       <select id="form" name="form">
-        <option value="any">시드에 맡김</option>
+        <option value="any">From the seed</option>
         ${FAMILIES.map(family => `<option value="${family}">${FAMILY_LABELS[family]}</option>`).join('')}
       </select>
     </div>
     <div class="field">
-      <label for="density">무늬 밀도 <output for="density" id="density-value"></output></label>
+      <label for="density">Pattern density <output for="density" id="density-value"></output></label>
       <input id="density" name="density" type="range" min="0" max="1" step="0.01">
     </div>
     <div class="field">
-      <label for="strange">기묘함 <output for="strange" id="strange-value"></output></label>
+      <label for="strange">Strangeness <output for="strange" id="strange-value"></output></label>
       <input id="strange" name="strange" type="range" min="0" max="1" step="0.01">
     </div>
     <div class="actions">
-      <button type="submit" class="primary">그리기</button>
-      <button type="button" id="shuffle">무작위 시드</button>
-      <button type="button" id="replay">다시 그리기</button>
-      <button type="button" id="save">SVG 저장</button>
+      <button type="submit" class="primary">Draw</button>
+      <button type="button" id="shuffle">Random seed</button>
+      <button type="button" id="replay">Redraw</button>
+      <button type="button" id="save">Save SVG</button>
     </div>
   </form>`;
 
@@ -94,7 +94,7 @@ function draw(request: Request): void {
   try {
     moth = generateMoth(request.seed, request.options);
   } catch (failure) {
-    status.textContent = failure instanceof Error ? failure.message : '시드를 확인해주세요.';
+    status.textContent = failure instanceof Error ? failure.message : 'Check the seed.';
     return;
   }
   drawing?.cancel();
@@ -103,8 +103,8 @@ function draw(request: Request): void {
   writeRequest(request);
   const pairs = moth.wings.length / 2;
   status.textContent = `${moth.seed} · ${FAMILY_LABELS[moth.family]} · ${moth.wingspan.toFixed(0)} u`
-    + (pairs === 2 ? '' : ` · 날개 ${pairs}쌍`)
-    + (moth.torn.some(Boolean) ? ' · 손상' : '');
+    + (pairs === 2 ? '' : ` · ${pairs} wing pairs`)
+    + (moth.torn.some(Boolean) ? ' · torn' : '');
   saveButton.disabled = true;
   drawing = drawMoth(figure, moth, () => { saveButton.disabled = false; });
 }

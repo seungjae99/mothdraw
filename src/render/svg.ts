@@ -92,7 +92,7 @@ export function inkPlan(moth: Moth): readonly InkLayer[] {
 
 /** Wraps figure content in the shared frame, so static and animated views match. */
 export function inkFrame(moth: Moth, content: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${VIEW_BOX}" role="img" aria-label="나방 ${moth.family} 표본">`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${VIEW_BOX}" role="img" aria-label="${moth.family} moth specimen">`
     + `<g transform="${ORIGIN}" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
     + `${content}</g></svg>`;
 }
@@ -115,7 +115,7 @@ export function renderMoth(moth: Moth, mode: RenderMode = 'pattern'): string {
   const antennae = group(moth.antennae, 'fill="none" stroke-width="0.9"');
   const bodyFill = mode === 'structure' ? STRUCTURE_BODY : INK;
   const body = moth.body.map(shape => `<path d="${subpath(shape, true)}" fill="${bodyFill}"/>`).join('');
-  const label = `나방 ${moth.family} ${mode === 'silhouette' ? '실루엣' : '구조'}`;
+  const label = `${moth.family} moth ${mode === 'silhouette' ? 'silhouette' : 'wing structure'}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${VIEW_BOX}" role="img" aria-label="${label}">`
     + `<g transform="${ORIGIN}" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
     + `${wings}${bristles}${antennae}${body}</g></svg>`;
