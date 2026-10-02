@@ -1,8 +1,8 @@
 import { clip } from '../core/clip';
-import { contour, mirror, SEGMENT_SAMPLES, type Point, type Polyline } from '../core/geometry';
+import { clamp, contour, mirror, SEGMENT_SAMPLES, type Cubic, type Point, type Polyline } from '../core/geometry';
 import { MIN_ROUGHEN_POINTS, roughen } from '../core/ink';
 import { dice, type Dice } from '../core/random';
-import { buildBody } from './body';
+import { buildBody, headSeatOf, hipOf, shoulderOf, type BodyShape } from './body';
 import { FAMILIES, type Family } from './family';
 import { marginRange, wingField } from './field';
 import { dials, normalizeOptions, scaleRange, type Dials, type MothOptions } from './options';
@@ -14,7 +14,7 @@ export { MARK_LAYERS, TEXTURE_LAYERS, UNBOUNDED_LAYERS, type Mark, type MarkLaye
 export { FAMILIES, FAMILY_LABELS, type Family } from './family';
 export { DEFAULT_OPTIONS, normalizeOptions, type FamilyChoice, type MothOptions } from './options';
 
-export const GENERATOR_VERSION = '0.5.0';
+export const GENERATOR_VERSION = '0.6.0';
 /** Roughly how often a wing carries visible damage, per side. */
 const FORE_TEAR = 0.2;
 const HIND_TEAR = 0.14;
@@ -22,6 +22,8 @@ export interface Moth {
   seed: string;
   /** Normalized; a record of seed, options and version reproduces this exactly. */
   options: MothOptions;
+  /** Uniform scale already applied to every coordinate, against a nominal 1. */
+  size: number;
   generatorVersion: string;
   family: Family;
   /** [hindwing right, hindwing left, forewing right, forewing left]; marks index into this. */
@@ -106,6 +108,70 @@ const RECIPES: Record<Family, FamilyRecipe> = {
   },
 };
 
+/** A pair of wings, back to front; everything in front of it hides part of it. */
+interface WingLayer {
+  readonly outline: Polyline;
+  /** Where the wing-local field fans out from. */
+  readonly base: Point;
+  /** Outline index offset where fringe starts; the forewing costa is left bare. */
+  readonly seat: number;
+  readonly pattern: PatternRecipe;
+  readonly texture: TextureTuning;
+  readonly tear: number;
+}
+
+/**
+ * A hindwing seated between `top` and `rootY`. The spare third pair reuses it at
+ * a smaller scale, which is why every offset is expressed from the seat.
+ */
+function hindContour(width: number, depth: number, top: number, rootY: number, hinge: number, tailed: boolean): Polyline {
+  const start: Point = [hinge, top];
+  const outer: Point = [width * 0.79, top + depth * 0.32];
+  const bottom: Point = [width * 0.34, top + depth];
+  const rooted: Point = [hinge, rootY];
+  const middle = (top + rootY) / 2;
+  const close: Cubic = [[4, middle + 7], [4, middle - 3], start];
+  return tailed
+    ? contour(start, [
+      [[width * 0.25, top], [width * 0.64, top - 4], outer],
+      [[width * 0.79, top + depth * 0.7], [width * 0.53, top + depth * 0.65], [width * 0.47, top + depth * 0.88]],
+      [[width * 0.45, top + depth * 1.1], [width * 0.57, top + depth * 1.56], [width * 0.4, top + depth * 1.57]],
+      [[width * 0.43, top + depth * 1.23], [width * 0.32, top + depth * 0.96], [width * 0.27, top + depth * 0.89]],
+      [[width * 0.16, top + depth * 0.78], [8, rootY + 17], rooted],
+      close,
+    ])
+    : contour(start, [
+      [[width * 0.28, top - 2], [width * 0.69, top - 8], outer],
+      [[width * 0.85, top + depth * 0.8], [width * 0.64, top + depth * 1.14], bottom],
+      [[width * 0.14, top + depth * 0.95], [8, rootY + 15], rooted],
+      close,
+    ]);
+}
+
+/** The outline is drawn twice: once as the shape, once as a searching second pass. */
+function edge(outline: Polyline, span: readonly [number, number], ink: Dice, dial: Dials): LayerLine[] {
+  return [
+    { layer: 'edge', points: outline },
+    { layer: 'edge', points: roughen(outline, ink, ink.range(0.5, 1.1) * dial.tremor, ink.int(3, 6), span) },
+  ];
+}
+
+/**
+ * Wear is drawn per side: the bite removes marks, fringe and the margin itself
+ * inside its hole, and the torn rim is drawn in place of what it took.
+ */
+function wear(outline: Polyline, span: readonly [number, number], chance: number, dial: Dials, texture: Dice) {
+  const holes: Polyline[] = [];
+  const rims: LayerLine[] = [];
+  const bites = texture.chance(Math.min(0.85, chance * dial.wearChance)) ? texture.int(1, 2) : 0;
+  for (let index = 0; index < bites; index++) {
+    const bite = tear(outline, span, dial.wear, texture);
+    holes.push(bite.hole);
+    for (const piece of clip(bite.rim, outline, 'inside')) rims.push({ layer: 'edge', points: piece });
+  }
+  return { holes, rims };
+}
+
 /** Bounds marks to their wing, then removes what an overlapping wing hides. */
 function place(lines: readonly LayerLine[], wing: number, outline: Polyline, occluders: readonly Polyline[]): Mark[] {
   const marks: Mark[] = [];
@@ -169,45 +235,66 @@ export function generateMoth(input: string, choices?: Partial<MothOptions>): Mot
   const dial = dials(options);
   const structure = dice(seed, 'structure');
   const range = (a: number, b: number) => structure.range(a, b);
+  const push = (value: number, low: number, high: number) => stretch(value, low, high, dial.extremes);
   // The family is always drawn so the stream stays aligned, then overridden.
   const drawn = structure.pick(FAMILIES);
   const family = options.family === 'any' ? drawn : options.family;
-  const width = stretch(range(91, 139), 91, 139, dial.extremes);
-  const rise = stretch(range(41, 76), 41, 76, dial.extremes);
-  const depth = stretch(range(43, 67), 43, 67, dial.extremes);
-  const thoraxWidth = stretch(range(7, 11), 7, 11, dial.extremes);
-  const bodyLength = stretch(range(46, 74), 46, 74, dial.extremes);
+  const width = push(range(91, 139), 91, 139);
+  const rise = push(range(41, 76), 41, 76);
+  const depth = push(range(43, 67), 43, 67);
+
+  const shape: BodyShape = {
+    thoraxWidth: push(range(7, 11), 7, 11),
+    thoraxLength: push(range(13, 24), 13, 24),
+    thoraxSeat: -2,
+    headRadius: push(range(7, 11), 7, 11) * range(0.52, 0.95),
+    headHeight: push(range(6, 12), 6, 12),
+    abdomenWidth: push(range(7, 11), 7, 11) * range(0.56, 0.98),
+    abdomenLength: push(range(40, 82), 40, 82),
+    abdomenTaper: push(range(0.35, 1.9), 0.35, 1.9),
+  };
+  const hinge = shape.thoraxWidth * 0.45;
+  const shoulderY = shoulderOf(shape);
+  const hipY = hipOf(shape);
+
+  // Wing pairs. Two is the moth; one and three are the specimens that are wrong,
+  // so an orderly setting never reaches them.
+  const oddity = structure.unit();
+  const spare = Math.max(0, dial.extremes - 0.65) * 0.62;
+  const counted = oddity < spare * 0.45 ? 1 : oddity < spare ? 3 : 2;
+  // The tails belong to the hindwing, so a tailed specimen always keeps one.
+  const pairs = family === 'tailed' && counted === 1 ? 2 : counted;
+  const spareWidth = range(0.64, 0.95);
+  const spareDepth = range(0.78, 1.18);
+  const spareSeat = range(0.95, 1.5);
+  // Overall size. The frame is fixed, so this is the one dimension that reads
+  // as a specimen being large or small rather than as a different shape. It is
+  // left off the strangeness dial, which would otherwise push it out of frame.
+  const size = range(0.62, 1.15);
+
   const tipY = family === 'swept' ? -rise * 0.2 : -rise;
   const tipX = family === 'swept' ? width * 0.9 : width;
-  const shoulder: Point = [thoraxWidth * 0.45, -12];
-  const root: Point = [thoraxWidth * 0.45, 12];
+  const shoulder: Point = [hinge, shoulderY];
+  const root: Point = [hinge, hipY];
   const tip: Point = [tipX, tipY];
-  const lower: Point = [width * 0.64, family === 'swept' ? depth * 0.8 : depth * 0.2];
+  // A lone pair hangs lower, closer to a fore and hind wing fused into one.
+  const drop = family === 'swept' ? 0.8 : pairs === 1 ? 0.78 : 0.2;
+  const lower: Point = [width * 0.64, depth * drop];
   const front = contour(shoulder, [
     [[width * 0.29, -rise * 0.45], [width * 0.79, -rise * (family === 'rounded' ? 1.45 : 0.94)], tip],
     [[width * (family === 'rounded' ? 1.18 : 0.97), tipY + rise * 0.52], [width * 0.92, lower[1] - 1], lower],
-    [[width * 0.42, lower[1] + range(4, 15)], [width * 0.14, 22], root],
-    [[3, 5], [3, -6], shoulder],
+    [[width * 0.42, lower[1] + range(4, 15)], [width * 0.14, hipY + 10], root],
+    [[3, hipY - 7], [3, shoulderY + 6], shoulder],
   ]);
-  const backStart: Point = [thoraxWidth * 0.45, 0];
-  const backOuter: Point = [width * 0.79, depth * 0.32];
-  const backBottom: Point = [width * 0.34, depth];
-  const backRoot: Point = [thoraxWidth * 0.45, 22];
-  const back = family === 'tailed'
-    ? contour(backStart, [
-      [[width * 0.25, 0], [width * 0.64, -4], backOuter],
-      [[width * 0.79, depth * 0.7], [width * 0.53, depth * 0.65], [width * 0.47, depth * 0.88]],
-      [[width * 0.45, depth * 1.1], [width * 0.57, depth * 1.56], [width * 0.4, depth * 1.57]],
-      [[width * 0.43, depth * 1.23], [width * 0.32, depth * 0.96], [width * 0.27, depth * 0.89]],
-      [[width * 0.16, depth * 0.78], [8, 39], backRoot],
-      [[4, 18], [4, 8], backStart],
-    ])
-    : contour(backStart, [
-      [[width * 0.28, -2], [width * 0.69, -8], backOuter],
-      [[width * 0.85, depth * 0.8], [width * 0.64, depth * 1.14], backBottom],
-      [[width * 0.14, depth * 0.95], [8, 37], backRoot],
-      [[4, 18], [4, 8], backStart],
-    ]);
+
+  const backTop = hipY - 12;
+  const backRootY = hipY + 10;
+  const back = hindContour(width, depth, backTop, backRootY, hinge, family === 'tailed');
+  // The spare pair is seated below the hindwing, so what shows of it is the part
+  // that reaches past one: the silhouette gains a layer it should not have.
+  const spareTop = backTop + depth * 0.4 * spareSeat;
+  const spareOutline = hindContour(width * spareWidth, depth * spareDepth, spareTop, spareTop + 20, hinge, false);
+
   // Small edge lobes taper to zero near the root and preserve bilateral structure.
   const scallop = (points: Polyline): Polyline => points.map(([x, y], index) => {
     if (family !== 'scalloped' || index <= 20 || index >= 60) return [x, y];
@@ -219,19 +306,30 @@ export function generateMoth(input: string, choices?: Partial<MothOptions>): Mot
   // Tremor goes on the silhouette before anything is measured from it, so the
   // fields, the marks and the clipping all agree with the line that is drawn.
   const tremor = ink.range(0.9, 1.7) * dial.tremor;
-  const frontShape = roughen(scallop(front), ink, tremor, ink.int(4, 7), marginRange(front));
-  const backShape = roughen(scallop(back), ink, tremor, ink.int(4, 7), marginRange(back));
-  const stalk = contour([3, -26], [
-    [[10, -40], [range(17, 26), -47], [range(23, 34), -range(48, 62)]],
-  ]);
+  const inked = (points: Polyline): Polyline =>
+    roughen(scallop(points), ink, tremor, ink.int(4, 7), marginRange(points));
+
+  // Antennae. Length is the single feature that reads as unease from across a
+  // room, so a fifth of them run far past the wings.
+  const sweeping = structure.chance(0.25);
+  const reach = sweeping ? range(2, 2.9) : range(0.9, 1.45);
+  const spread = range(0.8, 1.3) * (sweeping ? 1.6 : 1);
+  const antennaRoot: Point = [3, headSeatOf(shape) - shape.headHeight * 0.5];
+  const stalk = contour(antennaRoot, [[
+    [10 * spread, antennaRoot[1] - 14 * reach],
+    [range(17, 26) * spread, antennaRoot[1] - 21 * reach],
+    [range(23, 34) * spread, antennaRoot[1] - range(22, 36) * reach],
+  ]]);
   const antennae: Polyline[] = [stalk, mirror(stalk)];
   const feathered = structure.unit() > 0.35;
   if (feathered) {
     // Bipectinate barbs, one per sample rather than every other, so the antenna
     // reads as a dense feather instead of a comb.
+    // A long feeler stays thin; piling barbs on it would read as a bush.
+    const barb = 7.5 * clamp(1.25 - reach * 0.3, 0.45, 1);
     for (let i = 2; i < 19; i++) {
       const point = stalk[i]!;
-      const length = Math.sin(i / 20 * Math.PI) * 7.5;
+      const length = Math.sin(i / 20 * Math.PI) * barb;
       const branch: Polyline = [[point[0] - length, point[1] - 3.4], point, [point[0] + length, point[1] + 2.2]];
       antennae.push(branch, mirror(branch));
     }
@@ -240,71 +338,64 @@ export function generateMoth(input: string, choices?: Partial<MothOptions>): Mot
   const recipe = tune(RECIPES[family], dial);
   const pattern = dice(seed, 'pattern');
   const texture = dice(seed, 'texture');
-  const foreField = wingField(frontShape, [thoraxWidth * 0.45, 0], pattern.range(0.02, 0.055));
-  const hindField = wingField(backShape, [thoraxWidth * 0.45, 11], pattern.range(0.015, 0.04));
-  const forePattern = wingPattern(foreField, recipe.fore, pattern);
-  const hindPattern = wingPattern(hindField, recipe.hind, pattern);
-  const [foreMargin, foreMarginEnd] = marginRange(frontShape);
-  const [hindMargin, hindMarginEnd] = marginRange(backShape);
-  // The forewing costal edge is bare, so its fringe starts after the first segment.
-  const foreTexture = (): LayerLine[] => wingTexture(foreField, frontShape,
-    { ...recipe.foreTexture, fringeFrom: foreMargin + SEGMENT_SAMPLES, fringeTo: foreMarginEnd }, texture);
-  const hindTexture = (): LayerLine[] => wingTexture(hindField, backShape,
-    { ...recipe.hindTexture, fringeFrom: hindMargin, fringeTo: hindMarginEnd }, texture);
-  // The outline is drawn twice: once as the shape itself, once as a searching
-  // second pass. Both sides are clipped in right-wing coordinates and the left
-  // is mirrored, so structure stays symmetric while the ink does not.
-  const edge = (outline: Polyline, span: readonly [number, number]): LayerLine[] => [
-    { layer: 'edge', points: outline },
-    { layer: 'edge', points: roughen(outline, ink, ink.range(0.5, 1.1) * dial.tremor, ink.int(3, 6), span) },
-  ];
-  const foreSpan = marginRange(frontShape);
-  const hindSpan = marginRange(backShape);
-  // Wear is drawn per side: the bite removes marks, fringe and the margin itself
-  // inside its hole, and the torn rim is drawn in place of what it took.
-  const wear = (outline: Polyline, span: readonly [number, number], chance: number) => {
-    const holes: Polyline[] = [];
-    const rims: LayerLine[] = [];
-    const bites = texture.chance(Math.min(0.85, chance * dial.wearChance)) ? texture.int(1, 2) : 0;
-    for (let index = 0; index < bites; index++) {
-      const bite = tear(outline, span, dial.wear, texture);
-      holes.push(bite.hole);
-      for (const piece of clip(bite.rim, outline, 'inside')) rims.push({ layer: 'edge', points: piece });
-    }
-    return { holes, rims };
-  };
-  // The pattern is trembled once and shared, so both sides carry the same hand.
-  // Asymmetry comes from the texture, the searching second outline and the wear.
-  const foreInked = tremble(forePattern, ink, dial.tremor);
-  const hindInked = tremble(hindPattern, ink, dial.tremor);
-  const torn: boolean[] = [];
-  const side = (
-    outline: Polyline, span: readonly [number, number], chance: number,
-    marking: readonly LayerLine[], wearing: LayerLine[], wing: number, occluders: readonly Polyline[],
-  ): Mark[] => {
-    const worn = wear(outline, span, chance);
-    torn[wing] = worn.holes.length > 0;
-    const lines = [...edge(outline, span), ...worn.rims, ...marking, ...tremble(wearing, ink, dial.tremor)];
-    const placed = place(lines, wing, outline, [...occluders, ...worn.holes]);
-    return wing % 2 === 0 ? placed : placed.map(flip);
-  };
-  const marks: Mark[] = [
-    ...side(backShape, hindSpan, HIND_TEAR, hindInked, hindTexture(), 0, [frontShape]),
-    ...side(backShape, hindSpan, HIND_TEAR, hindInked, hindTexture(), 1, [frontShape]),
-    ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 2, []),
-    ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 3, []),
-  ];
-  const parts = buildBody(thoraxWidth, bodyLength, dial.fur, texture);
+  // Back to front: the spare pair first, the forewing last. Each is hidden by
+  // every pair in front of it, so the stack reads without any fill.
+  const layers: WingLayer[] = [];
+  if (pairs === 3) {
+    layers.push({
+      outline: inked(spareOutline), base: [hinge, spareTop + 10], seat: 0,
+      pattern: recipe.hind, texture: recipe.hindTexture, tear: HIND_TEAR,
+    });
+  }
+  if (pairs >= 2) {
+    layers.push({
+      outline: inked(back), base: [hinge, backTop + 11], seat: 0,
+      pattern: recipe.hind, texture: recipe.hindTexture, tear: HIND_TEAR,
+    });
+  }
+  layers.push({
+    outline: inked(front), base: [hinge, shape.thoraxSeat], seat: SEGMENT_SAMPLES,
+    pattern: recipe.fore, texture: recipe.foreTexture, tear: FORE_TEAR,
+  });
 
+  const marks: Mark[] = [];
+  const torn: boolean[] = [];
+  for (let pair = 0; pair < layers.length; pair++) {
+    const layer = layers[pair]!;
+    const occluders = layers.slice(pair + 1).map(entry => entry.outline);
+    const field = wingField(layer.outline, layer.base, pattern.range(0.015, 0.055));
+    const span = marginRange(layer.outline);
+    // The pattern is trembled once and shared, so both sides carry the same hand.
+    const marking = tremble(wingPattern(field, layer.pattern, pattern), ink, dial.tremor);
+    for (let side = 0; side < 2; side++) {
+      const wearing = wingTexture(field, layer.outline,
+        { ...layer.texture, fringeFrom: span[0] + layer.seat, fringeTo: span[1] }, texture);
+      const worn = wear(layer.outline, span, layer.tear, dial, texture);
+      const wing = pair * 2 + side;
+      torn[wing] = worn.holes.length > 0;
+      const lines = [
+        ...edge(layer.outline, span, ink, dial),
+        ...worn.rims,
+        ...marking,
+        ...tremble(wearing, ink, dial.tremor),
+      ];
+      const placed = place(lines, wing, layer.outline, [...occluders, ...worn.holes]);
+      marks.push(...(side === 0 ? placed : placed.map(flip)));
+    }
+  }
+  const parts = buildBody(shape, dial.fur, texture);
+  const resize = (points: Polyline): Polyline => points.map(([x, y]) => [x * size, y * size]);
+
+  const wings = layers.flatMap(layer => [layer.outline, mirror(layer.outline)]);
   return {
-    seed, options, generatorVersion: GENERATOR_VERSION, family,
-    wings: [backShape, mirror(backShape), frontShape, mirror(frontShape)],
-    body: parts.shapes,
-    antennae,
-    bristles: parts.bristles,
+    seed, options, size, generatorVersion: GENERATOR_VERSION, family,
+    wings: wings.map(resize),
+    body: parts.shapes.map(resize),
+    antennae: antennae.map(resize),
+    bristles: parts.bristles.map(resize),
     torn,
-    marks,
-    bodyLines: parts.creases,
-    wingspan: Math.max(...frontShape.map(([x]) => x), ...backShape.map(([x]) => x)) * 2,
+    marks: marks.map(mark => ({ layer: mark.layer, wing: mark.wing, points: resize(mark.points) })),
+    bodyLines: parts.creases.map(resize),
+    wingspan: Math.max(...wings.flatMap(wing => wing.map(([x]) => x))) * 2 * size,
   };
 }
