@@ -5,3 +5,7 @@ artifacts/
 *.tsbuildinfo
 
 .tooling/
+
+# Working notes, kept locally
+AGENTS.md
+DEVELOPMENT.md
