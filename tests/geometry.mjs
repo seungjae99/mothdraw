@@ -11,9 +11,12 @@ const { generateMoth, normalizeOptions, DEFAULT_OPTIONS, FAMILIES, MARK_LAYERS, 
   await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 /** Line counts stay well under these so a runaway loop fails loudly. */
-const MAX_MARKS = 2000;
-const MAX_MARK_POINTS = 9000;
-/** Fringe crosses the margin; nothing may drift further than one stroke away. */
+const MAX_MARKS = 2400;
+const MAX_MARK_POINTS = 10000;
+/** The render frame, with room to spare for the largest specimen. */
+const BOUNDS = { x: 190, top: -160, bottom: 160 };
+/** Fringe crosses the margin; nothing may drift further than one stroke away.
+ *  Clearances are nominal, so a specimen's own size scales them. */
 const MAX_FRINGE_CLEARANCE = 5;
 /** The drawn outline trembles around the real one and must not wander off it. */
 const MAX_EDGE_CLEARANCE = 3;
@@ -66,13 +69,16 @@ for (const moth of all) {
     ...moth.marks.map(m => m.points)];
   for (const line of lines) {
     for (const [x, y] of line) {
-      assert.ok(Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) < 160 && y > -106 && y < 134,
+      assert.ok(Number.isFinite(x) && Number.isFinite(y)
+        && Math.abs(x) < BOUNDS.x && y > BOUNDS.top && y < BOUNDS.bottom,
         `${moth.seed}: viewport bounds`);
     }
   }
+  assert.ok(moth.wings.length % 2 === 0 && moth.wings.length / 2 >= 1 && moth.wings.length / 2 <= 3,
+    `${moth.seed}: one to three wing pairs, right then left`);
   for (const wing of moth.wings) {
     assert.deepEqual(wing[0], wing.at(-1), 'closed contour');
-    assert.ok(Math.abs(wing[0][0]) < 6, 'root must enter thorax');
+    assert.ok(Math.abs(wing[0][0]) < 9 * moth.size, 'root must enter thorax');
     for (let i = 0; i < wing.length - 1; i++) {
       for (let j = i + 2; j < wing.length - 1; j++) {
         if (i === 0 && j === wing.length - 2) continue;
@@ -81,8 +87,8 @@ for (const moth of all) {
       }
     }
   }
-  for (const [a, b] of [[0, 1], [2, 3]]) {
-    assert.deepEqual(flip(moth.wings[a]), moth.wings[b], 'bilateral symmetry');
+  for (let pair = 0; pair < moth.wings.length / 2; pair++) {
+    assert.deepEqual(flip(moth.wings[pair * 2]), moth.wings[pair * 2 + 1], 'bilateral symmetry');
   }
 
   // Pattern: bounded line counts and well-formed marks.
@@ -100,19 +106,21 @@ for (const moth of all) {
 for (const moth of sampled) {
   for (const mark of moth.marks) {
     const own = moth.wings[mark.wing];
-    const covering = mark.wing < 2 ? moth.wings[mark.wing + 2] : null;
+    // Wings are ordered back to front in pairs, so everything after this one covers it.
+    const covering = moth.wings.slice((Math.floor(mark.wing / 2) + 1) * 2);
     for (let index = 0; index < mark.points.length - 1; index++) {
       // Clipped endpoints land on the outline, so containment is read at midpoints.
       const inner = midpoint(mark.points[index], mark.points[index + 1]);
       if (!UNBOUNDED_LAYERS.includes(mark.layer)) {
         assert.ok(pointInPolygon(inner, own), `${moth.seed}: ${mark.layer} outside its wing`);
       }
-      if (covering) {
-        assert.ok(!pointInPolygon(inner, covering), `${moth.seed}: ${mark.layer} runs through the forewing`);
+      for (const front of covering) {
+        assert.ok(!pointInPolygon(inner, front), `${moth.seed}: ${mark.layer} runs through a wing in front of it`);
       }
     }
   }
-  for (const [a, b] of [[0, 1], [2, 3]]) {
+  for (let pair = 0; pair < moth.wings.length / 2; pair++) {
+    const [a, b] = [pair * 2, pair * 2 + 1];
     // Wear is the one thing allowed to break the mirror, and it does so by
     // removing pattern, so only intact pairs can be compared outright.
     if (!moth.torn[a] && !moth.torn[b]) {
@@ -130,14 +138,15 @@ for (const moth of specimens) {
     if (mark.layer === 'fringe') {
       for (const point of mark.points) {
         const clearance = distanceToOutline(point, moth.wings[mark.wing]);
-        assert.ok(clearance <= MAX_FRINGE_CLEARANCE, `${moth.seed}: fringe drifted ${clearance.toFixed(2)} from the margin`);
+        assert.ok(clearance <= MAX_FRINGE_CLEARANCE * moth.size,
+          `${moth.seed}: fringe drifted ${clearance.toFixed(2)} from the margin`);
       }
     }
     if (mark.layer === 'edge') {
       for (const point of mark.points) {
         // A torn rim cuts inwards; everything else hugs the outline.
         const clearance = distanceToOutline(point, moth.wings[mark.wing]);
-        assert.ok(pointInPolygon(point, moth.wings[mark.wing]) || clearance <= MAX_EDGE_CLEARANCE,
+        assert.ok(pointInPolygon(point, moth.wings[mark.wing]) || clearance <= MAX_EDGE_CLEARANCE * moth.size,
           `${moth.seed}: outline drifted ${clearance.toFixed(2)} off the wing`);
       }
     }
