@@ -101,7 +101,9 @@ function draw(request: Request): void {
   current = moth;
   shown = signature(request);
   writeRequest(request);
+  const pairs = moth.wings.length / 2;
   status.textContent = `${moth.seed} · ${FAMILY_LABELS[moth.family]} · ${moth.wingspan.toFixed(0)} u`
+    + (pairs === 2 ? '' : ` · 날개 ${pairs}쌍`)
     + (moth.torn.some(Boolean) ? ' · 손상' : '');
   saveButton.disabled = true;
   drawing = drawMoth(figure, moth, () => { saveButton.disabled = false; });

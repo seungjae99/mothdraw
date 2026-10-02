@@ -10,9 +10,13 @@ const STRUCTURE_HIND = '#d1c5ac';
 const STRUCTURE_BODY = '#8d917a';
 const BODY_INK = '#2b2f2a';
 const BODY_CREASE = '#9ba18e';
-/** One decimal is 0.1 units on a 340-wide viewBox: below half a pixel at any
+/** One decimal is 0.1 units on a 380-wide viewBox: below half a pixel at any
  *  size these plates are read at, and it halves the file. */
 const PRECISION = 1;
+/** Wide enough for the largest specimen the generator can produce, so a small
+ *  one reads as small rather than being scaled up to fill the frame. */
+const VIEW_BOX = '0 0 380 320';
+const ORIGIN = 'translate(190 160)';
 
 interface LayerStyle {
   readonly width: number;
@@ -88,8 +92,8 @@ export function inkPlan(moth: Moth): readonly InkLayer[] {
 
 /** Wraps figure content in the shared frame, so static and animated views match. */
 export function inkFrame(moth: Moth, content: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 260" role="img" aria-label="나방 ${moth.family} 표본">`
-    + `<g transform="translate(170 116)" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${VIEW_BOX}" role="img" aria-label="나방 ${moth.family} 표본">`
+    + `<g transform="${ORIGIN}" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
     + `${content}</g></svg>`;
 }
 
@@ -112,7 +116,7 @@ export function renderMoth(moth: Moth, mode: RenderMode = 'pattern'): string {
   const bodyFill = mode === 'structure' ? STRUCTURE_BODY : INK;
   const body = moth.body.map(shape => `<path d="${subpath(shape, true)}" fill="${bodyFill}"/>`).join('');
   const label = `나방 ${moth.family} ${mode === 'silhouette' ? '실루엣' : '구조'}`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 260" role="img" aria-label="${label}">`
-    + `<g transform="translate(170 116)" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${VIEW_BOX}" role="img" aria-label="${label}">`
+    + `<g transform="${ORIGIN}" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
     + `${wings}${bristles}${antennae}${body}</g></svg>`;
 }
