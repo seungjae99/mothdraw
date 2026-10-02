@@ -42,31 +42,77 @@ function group(lines: readonly Polyline[], attributes: string): string {
   return `<path ${attributes} d="${lines.map(line => subpath(line, false)).join(' ')}"/>`;
 }
 
-function markLayers(moth: Moth): string {
-  return MARK_LAYERS.map(layer => {
-    const lines = moth.marks.filter(mark => mark.layer === layer).map(mark => mark.points);
+/**
+ * The order a hand would work in, which is not the order the layers stack in.
+ * Keeping the two apart lets the animation draw the outline first while the
+ * shading still sits underneath it.
+ */
+const DRAW_ORDER: Record<MarkLayer, number> = {
+  edge: 0, vein: 3, band: 4, eyespot: 5, pupil: 5, shade: 6, hatch: 7, speckle: 8, fringe: 9,
+};
+const BODY_ORDER = 1;
+const ANTENNA_ORDER = 2;
+const BRISTLE_ORDER = 10;
+const CREASE_ORDER = 11;
+
+/** One <path> of the inked view, in stacking order, with its drawing order. */
+export interface InkLayer {
+  readonly id: string;
+  /** Everything but the `d`, so a caller can build the element and fill it in. */
+  readonly attributes: string;
+  readonly lines: readonly Polyline[];
+  readonly order: number;
+  /** A fill cannot be drawn stroke by stroke; it arrives once the layer is done. */
+  readonly filled: boolean;
+}
+
+export function inkPlan(moth: Moth): readonly InkLayer[] {
+  const layers: InkLayer[] = MARK_LAYERS.map(layer => {
     const style = LAYER_STYLES[layer];
-    return group(lines, `fill="${style.filled ? INK : 'none'}" stroke-width="${style.width}" opacity="${style.opacity}"`);
-  }).join('');
+    return {
+      id: `mark-${layer}`,
+      attributes: `fill="${style.filled ? INK : 'none'}" stroke-width="${style.width}" opacity="${style.opacity}"`,
+      lines: moth.marks.filter(mark => mark.layer === layer).map(mark => mark.points),
+      order: DRAW_ORDER[layer],
+      filled: style.filled,
+    };
+  });
+  layers.push(
+    { id: 'bristles', attributes: 'fill="none" stroke-width="0.75" opacity="0.88"', lines: moth.bristles, order: BRISTLE_ORDER, filled: false },
+    { id: 'antennae', attributes: 'fill="none" stroke-width="0.9"', lines: moth.antennae, order: ANTENNA_ORDER, filled: false },
+    { id: 'body', attributes: `fill="${BODY_INK}" stroke-width="1.1"`, lines: moth.body, order: BODY_ORDER, filled: true },
+    { id: 'creases', attributes: `fill="none" stroke="${BODY_CREASE}" stroke-width="0.5" opacity="0.62"`, lines: moth.bodyLines, order: CREASE_ORDER, filled: false },
+  );
+  return layers;
+}
+
+/** Wraps figure content in the shared frame, so static and animated views match. */
+export function inkFrame(moth: Moth, content: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 260" role="img" aria-label="나방 ${moth.family} 표본">`
+    + `<g transform="translate(170 116)" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
+    + `${content}</g></svg>`;
+}
+
+export function subpathOf(points: Polyline): string {
+  return subpath(points, false);
 }
 
 export function renderMoth(moth: Moth, mode: RenderMode = 'pattern'): string {
-  const inked = mode === 'pattern';
-  // The inked view is line only, so the outline arrives as an `edge` mark that
-  // the hindwing shares with every other mark it hides under the forewing.
-  const wings = inked ? '' : moth.wings
+  if (mode === 'pattern') {
+    return inkFrame(moth, inkPlan(moth)
+      .map(layer => group(layer.lines, layer.attributes))
+      .join(''));
+  }
+  // Inspection views keep their fills and show the wing shape before any wear.
+  const wings = moth.wings
     .map((wing, index) => `<path d="${subpath(wing, true)}" fill="${
       mode === 'silhouette' ? INK : index < 2 ? STRUCTURE_HIND : STRUCTURE_FORE}"/>`).join('');
   const bristles = group(moth.bristles, 'fill="none" stroke-width="0.75" opacity="0.88"');
   const antennae = group(moth.antennae, 'fill="none" stroke-width="0.9"');
-  const bodyFill = mode === 'structure' ? STRUCTURE_BODY : inked ? BODY_INK : INK;
+  const bodyFill = mode === 'structure' ? STRUCTURE_BODY : INK;
   const body = moth.body.map(shape => `<path d="${subpath(shape, true)}" fill="${bodyFill}"/>`).join('');
-  // Creases and hair sit on the dark body, so they need a lighter stroke.
-  const creases = inked
-    ? group(moth.bodyLines, `fill="none" stroke="${BODY_CREASE}" stroke-width="0.5" opacity="0.62"`)
-    : '';
-  const label = `나방 ${moth.family} ${mode === 'silhouette' ? '실루엣' : '표본'}`;
+  const label = `나방 ${moth.family} ${mode === 'silhouette' ? '실루엣' : '구조'}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 260" role="img" aria-label="${label}">`
     + `<g transform="translate(170 116)" stroke="${INK}" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round">`
-    + `${wings}${inked ? markLayers(moth) : ''}${bristles}${antennae}${body}${creases}</g></svg>`;
+    + `${wings}${bristles}${antennae}${body}</g></svg>`;
 }
