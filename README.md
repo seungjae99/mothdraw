@@ -6,6 +6,8 @@
 
 A browser tool that draws moths that never existed. One seed decides the shape, the markings and the wear, and the figure is drawn in front of you, outline first and texture last.
 
+> Inspired by [**fishdraw**](https://github.com/LingDong-/fishdraw) by Lingdong Huang (MIT). No code is shared with it — the moth anatomy, the markings and the drawing engine are written from scratch.
+
 <p align="center">
   <img src="docs/drawing.svg" width="440" alt="A moth being drawn stroke by stroke, outline first and texture last">
   <br><sub><code>nocturne-022</code></sub>

@@ -6,6 +6,8 @@
 
 존재하지 않는 나방을 그리는 브라우저 도구. 시드 하나가 형태와 무늬와 마모를 전부 결정하고, 윤곽부터 질감까지 그려지는 과정이 그대로 재생됩니다.
 
+> Lingdong Huang의 [**fishdraw**](https://github.com/LingDong-/fishdraw)(MIT)에서 영감을 받았습니다. 코드를 가져오지는 않았고, 나방의 구조와 무늬와 작도 엔진은 전부 새로 작성했습니다.
+
 <p align="center">
   <img src="docs/drawing.svg" width="440" alt="나방 한 마리가 윤곽부터 질감까지 순서대로 그려지는 애니메이션">
   <br><sub><code>nocturne-022</code></sub>
