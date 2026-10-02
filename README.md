@@ -8,30 +8,8 @@ A browser tool that draws moths that never existed. One seed decides the shape, 
 
 <p align="center">
   <img src="docs/drawing.svg" width="440" alt="A moth being drawn stroke by stroke, outline first and texture last">
+  <br><sub><code>nocturne-022</code></sub>
 </p>
-
-<p align="center"><sub><code>nocturne-022</code></sub></p>
-
-## Gallery
-
-<table>
-<tr>
-<td align="center"><img src="docs/gallery/nocturne-070.svg" width="165" alt="nocturne-070"></td>
-<td align="center"><img src="docs/gallery/nocturne-064.svg" width="165" alt="nocturne-064"></td>
-<td align="center"><img src="docs/gallery/nocturne-001.svg" width="165" alt="nocturne-001"></td>
-<td align="center"><img src="docs/gallery/nocturne-045.svg" width="165" alt="nocturne-045"></td>
-<td align="center"><img src="docs/gallery/nocturne-069.svg" width="165" alt="nocturne-069"></td>
-</tr>
-<tr>
-<td align="center"><sub><code>nocturne-070</code></sub></td>
-<td align="center"><sub><code>nocturne-064</code></sub></td>
-<td align="center"><sub><code>nocturne-001</code></sub></td>
-<td align="center"><sub><code>nocturne-045</code></sub></td>
-<td align="center"><sub><code>nocturne-069</code></sub></td>
-</tr>
-</table>
-
-Every specimen differs in overall size, wing pair count, antenna length and body proportion. The frame is fixed, so a small one looks small.
 
 ## Run
 
@@ -55,3 +33,32 @@ One specimen at a time. Set a seed and the three controls, press **그리기**, 
 | **기묘함** — strangeness | Line tremor, exaggerated proportions, eyespot size, body fur, torn margins, wing pair count. At zero nothing is torn and there are always two pairs |
 
 Both sliders sit at the middle by default. Click the figure or press <kbd>Esc</kbd> to skip to the finished drawing; under `prefers-reduced-motion` it appears at once. The seed and the settings ride in the URL hash, so a link reproduces the same specimen, and **SVG 저장** writes a standalone file.
+
+## Gallery
+
+Every specimen differs in overall size, wing pair count, antenna length and body proportion. The frame is fixed, so a small one looks small.
+
+<p align="center">
+  <img src="docs/gallery/nocturne-070.svg" width="520" alt="nocturne-070">
+  <br><sub><code>nocturne-070</code></sub>
+</p>
+
+<p align="center">
+  <img src="docs/gallery/nocturne-064.svg" width="520" alt="nocturne-064">
+  <br><sub><code>nocturne-064</code></sub>
+</p>
+
+<p align="center">
+  <img src="docs/gallery/nocturne-001.svg" width="520" alt="nocturne-001">
+  <br><sub><code>nocturne-001</code></sub>
+</p>
+
+<p align="center">
+  <img src="docs/gallery/nocturne-045.svg" width="520" alt="nocturne-045">
+  <br><sub><code>nocturne-045</code></sub>
+</p>
+
+<p align="center">
+  <img src="docs/gallery/nocturne-069.svg" width="520" alt="nocturne-069">
+  <br><sub><code>nocturne-069</code></sub>
+</p>
