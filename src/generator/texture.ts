@@ -108,10 +108,10 @@ export interface Tear {
  * place the specimen is allowed to be asymmetric, and it is what turns a tidy
  * plate into something that was found rather than designed.
  */
-export function tear(outline: Polyline, span: readonly [number, number], dice: Dice): Tear {
+export function tear(outline: Polyline, span: readonly [number, number], scale: number, dice: Dice): Tear {
   const seat = dice.range(span[0] + 8, span[1] - 8);
-  const spread = dice.range(2, 6);
-  const depth = dice.range(4, 11);
+  const spread = dice.range(2, 6) * scale;
+  const depth = dice.range(4, 11) * scale;
   const ahead = atIndex(outline, seat + 1);
   const behind = atIndex(outline, seat - 1);
   const length = Math.hypot(ahead[0] - behind[0], ahead[1] - behind[1]) || 1;

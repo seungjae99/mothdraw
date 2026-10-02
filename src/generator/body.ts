@@ -61,7 +61,7 @@ function leg(pair: LegPair, angle: number, reach: number, dice: Dice): Polyline[
   return [limb, ...spines];
 }
 
-export function buildBody(thoraxWidth: number, bodyLength: number, dice: Dice): BodyParts {
+export function buildBody(thoraxWidth: number, bodyLength: number, fur: number, dice: Dice): BodyParts {
   const headRadius = thoraxWidth * 0.69;
   const eyeRadius = headRadius * 0.66;
   const eyeX = headRadius * EYE_BULGE * 0.72;
@@ -89,7 +89,7 @@ export function buildBody(thoraxWidth: number, bodyLength: number, dice: Dice): 
   }
   const bristles: Polyline[] = [];
   // Dense tufts are what make the body read as fur rather than a painted shape.
-  const tufts = dice.int(64, 94);
+  const tufts = Math.round(dice.int(64, 94) * fur);
   for (let index = 0; index < tufts; index++) {
     const angle = dice.range(0, Math.PI * 2);
     const onHead = dice.chance(0.22);
@@ -100,7 +100,7 @@ export function buildBody(thoraxWidth: number, bodyLength: number, dice: Dice): 
     // Rooted inside the outline so the body fill swallows the root of the hair.
     const root: Point = [Math.cos(angle) * rimX * HAIR_ROOT, seat + Math.sin(angle) * rimY * HAIR_ROOT];
     const outward = Math.hypot(Math.cos(angle) / rimX, Math.sin(angle) / rimY) || 1;
-    const reach = dice.range(6, onAbdomen ? 11 : 17);
+    const reach = dice.range(6, onAbdomen ? 11 : 17) * fur;
     const curl = dice.range(-1.2, 1.2);
     const tip: Point = [
       root[0] + ((Math.cos(angle) / rimX) / outward) * reach + curl,

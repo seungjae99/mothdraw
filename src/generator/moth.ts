@@ -3,25 +3,25 @@ import { contour, mirror, SEGMENT_SAMPLES, type Point, type Polyline } from '../
 import { MIN_ROUGHEN_POINTS, roughen } from '../core/ink';
 import { dice, type Dice } from '../core/random';
 import { buildBody } from './body';
+import { FAMILIES, type Family } from './family';
 import { marginRange, wingField } from './field';
+import { dials, normalizeOptions, scaleRange, type Dials, type MothOptions } from './options';
 import { UNBOUNDED_LAYERS, type LayerLine, type Mark } from './marks';
 import { wingPattern, type PatternRecipe } from './pattern';
 import { tear, wingTexture, type TextureRecipe } from './texture';
 
 export { MARK_LAYERS, TEXTURE_LAYERS, UNBOUNDED_LAYERS, type Mark, type MarkLayer } from './marks';
+export { FAMILIES, FAMILY_LABELS, type Family } from './family';
+export { DEFAULT_OPTIONS, normalizeOptions, type FamilyChoice, type MothOptions } from './options';
 
-export const GENERATOR_VERSION = '0.4.0';
+export const GENERATOR_VERSION = '0.5.0';
 /** Roughly how often a wing carries visible damage, per side. */
 const FORE_TEAR = 0.2;
 const HIND_TEAR = 0.14;
-export const FAMILIES = ['rounded', 'pointed', 'swept', 'scalloped', 'tailed'] as const;
-export type Family = typeof FAMILIES[number];
-export const FAMILY_LABELS: Record<Family, string> = {
-  rounded: '둥근 날개', pointed: '뾰족한 날개', swept: '후퇴한 날개',
-  scalloped: '물결 날개', tailed: '긴 꼬리 날개',
-};
 export interface Moth {
   seed: string;
+  /** Normalized; a record of seed, options and version reproduces this exactly. */
+  options: MothOptions;
   generatorVersion: string;
   family: Family;
   /** [hindwing right, hindwing left, forewing right, forewing left]; marks index into this. */
@@ -124,23 +124,59 @@ const flip = (mark: Mark): Mark => ({ layer: mark.layer, wing: mark.wing, points
  * still trimmed there and containment stays exact. Short marks are a single
  * gesture already and are left alone.
  */
-function tremble(lines: readonly LayerLine[], ink: Dice): LayerLine[] {
+function tremble(lines: readonly LayerLine[], ink: Dice, amplitude: number): LayerLine[] {
   return lines.map(line => line.points.length < MIN_ROUGHEN_POINTS
     ? line
-    : { layer: line.layer, points: roughen(line.points, ink, ink.range(0.4, 0.9), ink.int(1, 3), null) });
+    : { layer: line.layer, points: roughen(line.points, ink, ink.range(0.4, 0.9) * amplitude, ink.int(1, 3), null) });
 }
 
-export function generateMoth(input: string): Moth {
+/** Pushes a drawn value away from the middle of its range; the strangeness dial. */
+function stretch(value: number, low: number, high: number, extremes: number): number {
+  // Returned untouched at the default so the dials do not perturb the reference
+  // plate through rounding alone.
+  if (extremes === 1) return value;
+  const middle = (low + high) / 2;
+  return middle + (value - middle) * extremes;
+}
+
+/** Applies the dials to a family's recipe without touching the draw order. */
+function tune(recipe: FamilyRecipe, dial: Dials): FamilyRecipe {
+  const pattern = (entry: PatternRecipe): PatternRecipe => ({
+    ...entry,
+    veins: scaleRange(entry.veins, dial.marks, 3),
+    bands: scaleRange(entry.bands, dial.marks, 1),
+    shadeStrokes: scaleRange(entry.shadeStrokes, dial.marks, 8),
+    eyespot: Math.min(1, entry.eyespot * dial.eyes),
+    eyespotRadius: [entry.eyespotRadius[0] * dial.eyes, entry.eyespotRadius[1] * dial.eyes],
+  });
+  const texture = (entry: TextureTuning): TextureTuning => ({
+    ...entry,
+    hatchStrokes: scaleRange(entry.hatchStrokes, dial.marks, 2),
+    shadeStrokes: scaleRange(entry.shadeStrokes, dial.marks, 2),
+    speckles: scaleRange(entry.speckles, dial.marks, 1),
+    fringeStep: Math.max(0.9, entry.fringeStep / dial.marks),
+  });
+  return {
+    fore: pattern(recipe.fore), hind: pattern(recipe.hind),
+    foreTexture: texture(recipe.foreTexture), hindTexture: texture(recipe.hindTexture),
+  };
+}
+
+export function generateMoth(input: string, choices?: Partial<MothOptions>): Moth {
   const seed = input.normalize('NFC').trim();
   if (!seed || seed.length > 160) throw new Error('시드는 1~160자로 입력해주세요.');
+  const options = normalizeOptions(choices);
+  const dial = dials(options);
   const structure = dice(seed, 'structure');
   const range = (a: number, b: number) => structure.range(a, b);
-  const family = structure.pick(FAMILIES);
-  const width = range(91, 139);
-  const rise = range(41, 76);
-  const depth = range(43, 67);
-  const thoraxWidth = range(7, 11);
-  const bodyLength = range(46, 74);
+  // The family is always drawn so the stream stays aligned, then overridden.
+  const drawn = structure.pick(FAMILIES);
+  const family = options.family === 'any' ? drawn : options.family;
+  const width = stretch(range(91, 139), 91, 139, dial.extremes);
+  const rise = stretch(range(41, 76), 41, 76, dial.extremes);
+  const depth = stretch(range(43, 67), 43, 67, dial.extremes);
+  const thoraxWidth = stretch(range(7, 11), 7, 11, dial.extremes);
+  const bodyLength = stretch(range(46, 74), 46, 74, dial.extremes);
   const tipY = family === 'swept' ? -rise * 0.2 : -rise;
   const tipX = family === 'swept' ? width * 0.9 : width;
   const shoulder: Point = [thoraxWidth * 0.45, -12];
@@ -182,7 +218,7 @@ export function generateMoth(input: string): Moth {
   const ink = dice(seed, 'ink');
   // Tremor goes on the silhouette before anything is measured from it, so the
   // fields, the marks and the clipping all agree with the line that is drawn.
-  const tremor = ink.range(0.9, 1.7);
+  const tremor = ink.range(0.9, 1.7) * dial.tremor;
   const frontShape = roughen(scallop(front), ink, tremor, ink.int(4, 7), marginRange(front));
   const backShape = roughen(scallop(back), ink, tremor, ink.int(4, 7), marginRange(back));
   const stalk = contour([3, -26], [
@@ -201,7 +237,7 @@ export function generateMoth(input: string): Moth {
     }
   }
 
-  const recipe = RECIPES[family];
+  const recipe = tune(RECIPES[family], dial);
   const pattern = dice(seed, 'pattern');
   const texture = dice(seed, 'texture');
   const foreField = wingField(frontShape, [thoraxWidth * 0.45, 0], pattern.range(0.02, 0.055));
@@ -220,7 +256,7 @@ export function generateMoth(input: string): Moth {
   // is mirrored, so structure stays symmetric while the ink does not.
   const edge = (outline: Polyline, span: readonly [number, number]): LayerLine[] => [
     { layer: 'edge', points: outline },
-    { layer: 'edge', points: roughen(outline, ink, ink.range(0.5, 1.1), ink.int(3, 6), span) },
+    { layer: 'edge', points: roughen(outline, ink, ink.range(0.5, 1.1) * dial.tremor, ink.int(3, 6), span) },
   ];
   const foreSpan = marginRange(frontShape);
   const hindSpan = marginRange(backShape);
@@ -229,9 +265,9 @@ export function generateMoth(input: string): Moth {
   const wear = (outline: Polyline, span: readonly [number, number], chance: number) => {
     const holes: Polyline[] = [];
     const rims: LayerLine[] = [];
-    const bites = texture.chance(chance) ? texture.int(1, 2) : 0;
+    const bites = texture.chance(Math.min(0.85, chance * dial.wearChance)) ? texture.int(1, 2) : 0;
     for (let index = 0; index < bites; index++) {
-      const bite = tear(outline, span, texture);
+      const bite = tear(outline, span, dial.wear, texture);
       holes.push(bite.hole);
       for (const piece of clip(bite.rim, outline, 'inside')) rims.push({ layer: 'edge', points: piece });
     }
@@ -239,8 +275,8 @@ export function generateMoth(input: string): Moth {
   };
   // The pattern is trembled once and shared, so both sides carry the same hand.
   // Asymmetry comes from the texture, the searching second outline and the wear.
-  const foreInked = tremble(forePattern, ink);
-  const hindInked = tremble(hindPattern, ink);
+  const foreInked = tremble(forePattern, ink, dial.tremor);
+  const hindInked = tremble(hindPattern, ink, dial.tremor);
   const torn: boolean[] = [];
   const side = (
     outline: Polyline, span: readonly [number, number], chance: number,
@@ -248,7 +284,7 @@ export function generateMoth(input: string): Moth {
   ): Mark[] => {
     const worn = wear(outline, span, chance);
     torn[wing] = worn.holes.length > 0;
-    const lines = [...edge(outline, span), ...worn.rims, ...marking, ...tremble(wearing, ink)];
+    const lines = [...edge(outline, span), ...worn.rims, ...marking, ...tremble(wearing, ink, dial.tremor)];
     const placed = place(lines, wing, outline, [...occluders, ...worn.holes]);
     return wing % 2 === 0 ? placed : placed.map(flip);
   };
@@ -258,10 +294,10 @@ export function generateMoth(input: string): Moth {
     ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 2, []),
     ...side(frontShape, foreSpan, FORE_TEAR, foreInked, foreTexture(), 3, []),
   ];
-  const parts = buildBody(thoraxWidth, bodyLength, texture);
+  const parts = buildBody(thoraxWidth, bodyLength, dial.fur, texture);
 
   return {
-    seed, generatorVersion: GENERATOR_VERSION, family,
+    seed, options, generatorVersion: GENERATOR_VERSION, family,
     wings: [backShape, mirror(backShape), frontShape, mirror(frontShape)],
     body: parts.shapes,
     antennae,
