@@ -6,12 +6,13 @@ const bundle = await build({
   stdin: { contents: ENTRY, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
-const { generateMoth, FAMILIES, MARK_LAYERS, TEXTURE_LAYERS, UNBOUNDED_LAYERS, SPECIMEN_SEEDS, SURVEY_SEEDS, pointInPolygon } =
+const { generateMoth, normalizeOptions, DEFAULT_OPTIONS, FAMILIES, MARK_LAYERS, TEXTURE_LAYERS,
+  UNBOUNDED_LAYERS, SPECIMEN_SEEDS, SURVEY_SEEDS, pointInPolygon } =
   await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 /** Line counts stay well under these so a runaway loop fails loudly. */
-const MAX_MARKS = 1300;
-const MAX_MARK_POINTS = 6000;
+const MAX_MARKS = 2000;
+const MAX_MARK_POINTS = 9000;
 /** Fringe crosses the margin; nothing may drift further than one stroke away. */
 const MAX_FRINGE_CLEARANCE = 5;
 /** The drawn outline trembles around the real one and must not wander off it. */
@@ -19,11 +20,21 @@ const MAX_EDGE_CLEARANCE = 3;
 const PATTERN_LAYERS = MARK_LAYERS.filter(
   layer => !TEXTURE_LAYERS.includes(layer) && !UNBOUNDED_LAYERS.includes(layer));
 
-const specimens = SPECIMEN_SEEDS.map(generateMoth);
+const specimens = SPECIMEN_SEEDS.map(seed => generateMoth(seed));
 const stress = Array.from({ length: 200 }, (_, index) => generateMoth(`stress-${index}`));
-const all = [...specimens, ...stress];
+/** The corners of the dials, where the geometry is most likely to come apart. */
+const CORNERS = [
+  { family: 'any', density: 0, strangeness: 0 },
+  { family: 'any', density: 1, strangeness: 0 },
+  { family: 'any', density: 0, strangeness: 1 },
+  { family: 'any', density: 1, strangeness: 1 },
+  ...FAMILIES.map(family => ({ family, density: 1, strangeness: 1 })),
+];
+const extremes = CORNERS.flatMap(options =>
+  SPECIMEN_SEEDS.slice(0, 8).map(seed => generateMoth(seed, options)));
+const all = [...specimens, ...stress, ...extremes];
 /** The slower geometric checks run on a representative subset. */
-const sampled = [...specimens, ...stress.slice(0, 40)];
+const sampled = [...specimens, ...stress.slice(0, 40), ...extremes.slice(0, 40)];
 
 const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
 const intersects = (a, b, c, d) =>
@@ -49,7 +60,8 @@ function distanceToOutline(point, outline) {
 
 // Structure: unchanged invariants from the silhouette stage.
 for (const moth of all) {
-  assert.deepEqual(moth, generateMoth(moth.seed), `${moth.seed}: seed must reproduce all geometry`);
+  assert.deepEqual(moth, generateMoth(moth.seed, moth.options),
+    `${moth.seed}: seed and options must reproduce all geometry`);
   const lines = [...moth.wings, ...moth.body, ...moth.antennae, ...moth.bodyLines, ...moth.bristles,
     ...moth.marks.map(m => m.points)];
   for (const line of lines) {
@@ -139,10 +151,28 @@ assert.equal(new Set(specimens.map(m => m.family)).size, FAMILIES.length, 'all f
 assert.ok(specimens.every(m => new Set(m.marks.map(mark => mark.layer)).size >= 6), 'every specimen carries most layers');
 assert.ok(specimens.some(m => m.torn.some(Boolean)) && specimens.some(m => !m.torn.some(Boolean)),
   'the fixed plate must show both worn and intact specimens');
+// Options are part of the record: normalized, clamped, and reproducible.
+assert.deepEqual(normalizeOptions(), DEFAULT_OPTIONS, 'missing options fall back to the default');
+assert.deepEqual(normalizeOptions({ family: 'wyvern', density: 5, strangeness: -2 }),
+  { family: 'any', density: 1, strangeness: 0 }, 'options are clamped and unknown families rejected');
+assert.equal(normalizeOptions({ density: 0.123456 }).density, 0.12, 'dials snap to a fixed step');
+for (const options of CORNERS) {
+  const moth = generateMoth('contract', options);
+  assert.deepEqual(moth, generateMoth('contract', moth.options), 'the stored record reproduces the specimen');
+  assert.deepEqual(moth.options, normalizeOptions(options), 'the record carries normalized options');
+  if (options.family !== 'any') assert.equal(moth.family, options.family, 'the form dial decides the family');
+}
+assert.deepEqual(generateMoth('contract'), generateMoth('contract', DEFAULT_OPTIONS),
+  'omitting options matches the default record');
+assert.notDeepEqual(generateMoth('contract', { density: 0 }).marks.length,
+  generateMoth('contract', { density: 1 }).marks.length, 'the density dial changes the drawing');
+assert.ok(generateMoth('contract', { strangeness: 0 }).wingspan !== generateMoth('contract', { strangeness: 1 }).wingspan,
+  'the strangeness dial changes the proportions');
+
 assert.throws(() => generateMoth('  '));
 assert.throws(() => generateMoth('x'.repeat(161)));
 
 const totalMarks = all.reduce((sum, moth) => sum + moth.marks.length, 0);
-console.log('PASS: 20 fixed + 200 stress seeds; deterministic, finite, bounded, closed, non-self-intersecting, connected roots and bilateral symmetry.');
+console.log(`PASS: 20 fixed + 200 stress seeds + ${extremes.length} at the dial corners; deterministic, finite, bounded, closed, non-self-intersecting, connected roots and bilateral symmetry.`);
 console.log(`PASS: marks clipped to their wing, hidden under the forewing, mirrored pattern and per-side texture (${Math.round(totalMarks / all.length)} lines per specimen).`);
 console.log('Families:', Object.fromEntries(FAMILIES.map(f => [f, specimens.filter(m => m.family === f).length])));
