@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node tests/geometry.mjs && node tests/draw.mjs",
-    "plate": "node scripts/export-plate.mjs"
+    "plate": "node scripts/export-plate.mjs",
+    "docs": "node scripts/export-docs.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
