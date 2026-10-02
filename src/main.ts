@@ -1,74 +1,159 @@
 import './style.css';
-import { FAMILIES, FAMILY_LABELS, generateMoth, GENERATOR_VERSION, SPECIMEN_SEEDS, SURVEY_SEEDS, type Moth } from './generator/moth';
-import { renderMoth, RENDER_MODES, type RenderMode } from './render/svg';
+import {
+  DEFAULT_OPTIONS, FAMILIES, FAMILY_LABELS, generateMoth, GENERATOR_VERSION,
+  normalizeOptions, type FamilyChoice, type Moth,
+} from './generator/moth';
+import { renderMoth } from './render/svg';
+import { drawMoth, type Drawing } from './ui/draw';
+import { readRequest, signature, writeRequest, type Request } from './ui/location';
 
-const MODE_LABELS: Record<RenderMode, string> = { pattern: '무늬', silhouette: '실루엣', structure: '구조' };
-const PLATES = {
-  plate: { seeds: SPECIMEN_SEEDS, title: 'PLATE 01', note: '무늬 연구' },
-  survey: { seeds: SURVEY_SEEDS, title: 'SURVEY', note: '다양성과 스타일 일관성 점검' },
-} as const;
-type PlateName = keyof typeof PLATES;
-const PLATE_NAMES = Object.keys(PLATES) as PlateName[];
+const SEED_WORDS = ['nocturne', 'vesper', 'umbra', 'tenebra', 'cinder', 'noctua', 'velvet', 'ashen', 'lumen', 'hollow'];
 
 const app = document.querySelector<HTMLElement>('#app');
 if (!app) throw new Error('앱 루트 요소를 찾을 수 없습니다.');
 
-const buttons = (group: string, entries: readonly (readonly [string, string])[], active: string): string =>
-  entries.map(([value, label]) =>
-    `<button data-${group}="${value}" aria-pressed="${String(value === active)}">${label}</button>`).join('');
-
 app.innerHTML = `
   <header><a class="brand" href="./">M<span class="brand-star">✳</span>THDRAW</a><span class="edition">FIELD NOTES / 001</span></header>
-  <section class="intro"><div class="eyebrow">A STUDY OF IMAGINARY LEPIDOPTERA</div><h1>Shapes of the night<span>밤의 형태들</span></h1>
-  <p>시드 하나가 형태와 무늬와 마모를 함께 결정합니다.<br>떨리는 선으로만 그리고, 날개는 종종 찢어져 있습니다.</p></section>
-  <section class="toolbar" aria-label="표본 표시 설정"><div class="collection-title" id="plate-title"></div>
-  <div class="controls">
-  <div class="modes" role="group" aria-label="표본 수">${buttons('plate', PLATE_NAMES.map(name => [name, `${PLATES[name].seeds.length}개`] as const), 'plate')}</div>
-  <div class="modes" role="group" aria-label="표현 방식">${buttons('mode', RENDER_MODES.map(name => [name, MODE_LABELS[name]] as const), 'pattern')}</div>
-  </div></section>
-  <section class="specimens" aria-label="시드별 나방 표본"></section>
-  <footer><span>MOTHDRAW / GENERATOR ${GENERATOR_VERSION}</span><span>허구의 종을 위한 작은 자연사 도감</span><span id="family-count"></span></footer>`;
+  <section class="intro"><div class="eyebrow">A STUDY OF IMAGINARY LEPIDOPTERA</div>
+  <h1>Shapes of the night<span>밤의 형태들</span></h1></section>
+  <form class="console" autocomplete="off">
+    <div class="field seed">
+      <label for="seed">시드</label>
+      <input id="seed" name="seed" type="text" maxlength="160" placeholder="아무 문자열" required>
+    </div>
+    <div class="field">
+      <label for="form">형태</label>
+      <select id="form" name="form">
+        <option value="any">시드에 맡김</option>
+        ${FAMILIES.map(family => `<option value="${family}">${FAMILY_LABELS[family]}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label for="density">무늬 밀도 <output for="density" id="density-value"></output></label>
+      <input id="density" name="density" type="range" min="0" max="1" step="0.01">
+    </div>
+    <div class="field">
+      <label for="strange">기묘함 <output for="strange" id="strange-value"></output></label>
+      <input id="strange" name="strange" type="range" min="0" max="1" step="0.01">
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary">그리기</button>
+      <button type="button" id="shuffle">무작위 시드</button>
+    </div>
+  </form>
+  <section class="stage">
+    <div class="figure" id="figure" title="눌러서 바로 완성"></div>
+    <div class="caption">
+      <span id="caption-seed" aria-live="polite"></span>
+      <span class="caption-actions">
+        <button type="button" id="replay">다시 그리기</button>
+        <button type="button" id="save">SVG 저장</button>
+      </span>
+    </div>
+  </section>
+  <footer><span>MOTHDRAW / GENERATOR ${GENERATOR_VERSION}</span><span>허구의 종을 위한 작은 자연사 도감</span></footer>`;
 
-const grid = document.querySelector<HTMLElement>('.specimens')!;
-const title = document.querySelector<HTMLElement>('#plate-title')!;
-const familyCount = document.querySelector<HTMLElement>('#family-count')!;
+const form = app.querySelector<HTMLFormElement>('.console')!;
+const seedInput = app.querySelector<HTMLInputElement>('#seed')!;
+const formSelect = app.querySelector<HTMLSelectElement>('#form')!;
+const densityInput = app.querySelector<HTMLInputElement>('#density')!;
+const strangeInput = app.querySelector<HTMLInputElement>('#strange')!;
+const densityValue = app.querySelector<HTMLOutputElement>('#density-value')!;
+const strangeValue = app.querySelector<HTMLOutputElement>('#strange-value')!;
+const figure = app.querySelector<HTMLElement>('#figure')!;
+const captionSeed = app.querySelector<HTMLElement>('#caption-seed')!;
+const saveButton = app.querySelector<HTMLButtonElement>('#save')!;
 
-// A hundred specimens are a few hundred milliseconds of work, so each plate is
-// generated on first use and kept.
-const cache = new Map<PlateName, readonly Moth[]>();
-function specimens(name: PlateName): readonly Moth[] {
-  const ready = cache.get(name);
-  if (ready) return ready;
-  const built = PLATES[name].seeds.map(generateMoth);
-  cache.set(name, built);
-  return built;
+function randomSeed(): string {
+  const word = SEED_WORDS[Math.floor(Math.random() * SEED_WORDS.length)]!;
+  return `${word}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
 }
 
-let mode: RenderMode = 'pattern';
-let plate: PlateName = 'plate';
-
-function render(): void {
-  const moths = specimens(plate);
-  const compact = plate === 'survey';
-  grid.classList.toggle('compact', compact);
-  title.innerHTML = `${PLATES[plate].title} <span>${PLATES[plate].note} · ${moths.length} specimens</span>`;
-  grid.innerHTML = moths.map((moth, index) => `<article class="specimen">`
-    + `<div class="specimen-top"><span>${String(index + 1).padStart(compact ? 3 : 2, '0')}</span><span>${FAMILY_LABELS[moth.family]}</span></div>`
-    + renderMoth(moth, mode)
-    + (compact ? '' : `<div class="specimen-bottom"><span>${moth.seed}</span><span>${moth.wingspan.toFixed(0)} u</span></div>`)
-    + `</article>`).join('');
-  familyCount.textContent = `${new Set(moths.map(moth => moth.family)).size} / ${FAMILIES.length} 형태 계열`;
+function showDials(): void {
+  densityValue.textContent = Number(densityInput.value).toFixed(2);
+  strangeValue.textContent = Number(strangeInput.value).toFixed(2);
 }
 
-function bind<Value extends string>(group: string, apply: (value: Value) => void): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>(`[data-${group}]`)) {
-    button.addEventListener('click', () => {
-      for (const peer of document.querySelectorAll(`[data-${group}]`)) peer.setAttribute('aria-pressed', String(peer === button));
-      apply(button.dataset[group] as Value);
-      render();
-    });
+function currentRequest(): Request {
+  return {
+    seed: seedInput.value.trim() || randomSeed(),
+    options: normalizeOptions({
+      family: formSelect.value as FamilyChoice,
+      density: Number(densityInput.value),
+      strangeness: Number(strangeInput.value),
+    }),
+  };
+}
+
+function fillControls(request: Request): void {
+  seedInput.value = request.seed;
+  formSelect.value = request.options.family;
+  densityInput.value = String(request.options.density);
+  strangeInput.value = String(request.options.strangeness);
+  showDials();
+}
+
+let drawing: Drawing | null = null;
+let current: Moth | null = null;
+let shown = '';
+
+/** Only the newest request is on screen; an older drawing is dropped mid-stroke. */
+function draw(request: Request): void {
+  let moth: Moth;
+  try {
+    moth = generateMoth(request.seed, request.options);
+  } catch (failure) {
+    captionSeed.textContent = failure instanceof Error ? failure.message : '시드를 확인해주세요.';
+    return;
   }
+  drawing?.cancel();
+  current = moth;
+  shown = signature(request);
+  writeRequest(request);
+  captionSeed.textContent = `${moth.seed} · ${FAMILY_LABELS[moth.family]} · ${moth.wingspan.toFixed(0)} u`
+    + (moth.torn.some(Boolean) ? ' · 손상' : '');
+  saveButton.disabled = true;
+  drawing = drawMoth(figure, moth, () => { saveButton.disabled = false; });
 }
-bind<RenderMode>('mode', value => { mode = value; });
-bind<PlateName>('plate', value => { plate = value; });
-render();
+
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  const request = currentRequest();
+  fillControls(request);
+  draw(request);
+});
+app.querySelector<HTMLButtonElement>('#shuffle')!.addEventListener('click', () => {
+  seedInput.value = randomSeed();
+  draw(currentRequest());
+});
+app.querySelector<HTMLButtonElement>('#replay')!.addEventListener('click', () => {
+  if (current) draw({ seed: current.seed, options: current.options });
+});
+// Skipping the rest of the drawing, by pointer or by key.
+figure.addEventListener('click', () => drawing?.finish());
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') drawing?.finish();
+});
+for (const dial of [densityInput, strangeInput]) dial.addEventListener('input', showDials);
+
+saveButton.addEventListener('click', () => {
+  if (!current) return;
+  const file = new Blob([renderMoth(current, 'pattern')], { type: 'image/svg+xml' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(file);
+  link.download = `mothdraw-${current.seed}.svg`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+
+// A hash edited by hand or reached from a link redraws; our own writes do not.
+window.addEventListener('hashchange', () => {
+  const request = readRequest();
+  if (!request || signature(request) === shown) return;
+  fillControls(request);
+  draw(request);
+});
+
+const initial = readRequest() ?? { seed: randomSeed(), options: DEFAULT_OPTIONS };
+fillControls(initial);
+draw(initial);
