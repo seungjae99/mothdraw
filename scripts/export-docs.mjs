@@ -7,15 +7,24 @@ const bundle = await build({
   stdin: { contents: ENTRY, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
-const { generateMoth, FAMILY_LABELS, inkFrame, inkPlan, renderMoth, subpathOf } =
+const { generateMoth, inkFrame, inkPlan, renderMoth, subpathOf } =
   await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 const PAPER = '#f3f0e7';
 const TILE = '#f9f7f0';
 const RULE = '#d8d7ca';
 const LABEL = '#747b6b';
-/** Matches the generator's own frame. */
-const FIGURE = { width: 380, height: 320 };
+
+/**
+ * The figure is ink on nothing, which disappears against a dark page. Every file
+ * meant for a README carries its own paper.
+ */
+function onPaper(markup) {
+  const opening = markup.indexOf('>') + 1;
+  return markup.slice(0, opening)
+    + `<rect width="100%" height="100%" fill="${TILE}"/>`
+    + markup.slice(opening);
+}
 
 function strip(entries, { tileWidth, tileHeight, gap = 14, margin = 18 }) {
   const width = margin * 2 + entries.length * tileWidth + (entries.length - 1) * gap;
@@ -90,38 +99,33 @@ function drawing(moth, { draw = 6.5, hold = 2.5, buckets = 80 }) {
       + ` style="--d:${group.longest.toFixed(1)};stroke-dasharray:var(--d);animation:k${group.slot} ${cycle}s linear infinite"`
       + ` d="${group.lines.map(subpathOf).join(' ')}"/>`)
     .join('');
-  return inkFrame(moth, `<style>${rules.join('')}</style>${paths}`);
+  return onPaper(inkFrame(moth, `<style>${rules.join('')}</style>${paths}`));
 }
 
-const destination = resolve(process.argv[2] ?? 'docs');
-await mkdir(destination, { recursive: true });
-
-const SPECIMENS = ['nocturne-022', 'nocturne-001', 'nocturne-007', 'nocturne-030'];
+/** Five seeds chosen to span the families, the wing pair counts and the sizes. */
+const GALLERY = ['nocturne-070', 'nocturne-064', 'nocturne-001', 'nocturne-045', 'nocturne-069'];
+const DRAWN = 'nocturne-022';
 const DIALS = [
-  { label: '무늬 밀도 0', options: { density: 0, strangeness: 0.5 } },
-  { label: '무늬 밀도 1', options: { density: 1, strangeness: 0.5 } },
-  { label: '기묘함 0', options: { density: 0.5, strangeness: 0 } },
-  { label: '기묘함 1', options: { density: 0.5, strangeness: 1 } },
+  { label: '무늬 밀도 0 / density 0', options: { density: 0, strangeness: 0.5 } },
+  { label: '무늬 밀도 1 / density 1', options: { density: 1, strangeness: 0.5 } },
+  { label: '기묘함 0 / strangeness 0', options: { density: 0.5, strangeness: 0 } },
+  { label: '기묘함 1 / strangeness 1', options: { density: 0.5, strangeness: 1 } },
 ];
 
+const destination = resolve(process.argv[2] ?? 'docs');
+await mkdir(resolve(destination, 'gallery'), { recursive: true });
+
 const sheets = [
-  ['specimens.svg', strip(SPECIMENS.map(seed => {
-    const moth = generateMoth(seed);
-    const pairs = moth.wings.length / 2;
-    return {
-      moth,
-      label: `${seed} · ${FAMILY_LABELS[moth.family]}${pairs === 2 ? '' : ` · 날개 ${pairs}쌍`}`,
-    };
-  }), { tileWidth: 230, tileHeight: 210 })],
+  ...GALLERY.map(seed => [`gallery/${seed}.svg`, onPaper(renderMoth(generateMoth(seed), 'pattern'))]),
   ['dials.svg', strip(DIALS.map(entry => ({
     moth: generateMoth('nocturne-015', entry.options),
     label: entry.label,
-  })), { tileWidth: 196, tileHeight: 184 })],
-  ['drawing.svg', drawing(generateMoth('nocturne-022'), {})],
+  })), { tileWidth: 210, tileHeight: 184 })],
+  ['drawing.svg', drawing(generateMoth(DRAWN), {})],
 ];
 
 for (const [name, markup] of sheets) {
   await writeFile(resolve(destination, name), markup);
-  console.log(`${name}  ${(markup.length / 1024).toFixed(0)} KB`);
+  console.log(`${name.padEnd(30)} ${(markup.length / 1024).toFixed(0)} KB`);
 }
-console.log(`Figure frame ${FIGURE.width}x${FIGURE.height}; written to ${destination}`);
+console.log(`Written to ${destination}`);
